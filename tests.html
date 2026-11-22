@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tests · sdr-web</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header><nav><a class="brand" href="index.html">sdr-web</a><a href="am.html">AM</a><a href="fm.html">FM</a><a href="qpsk.html">QPSK</a><a href="ber.html">BER</a><a href="tests.html">Tests</a></nav></header>
+<main>
+<h1>Core tests</h1>
+<div id="summary">Running…</div>
+<table class="results">
+<thead><tr><th>Test</th><th>Detail</th></tr></thead>
+<tbody id="results"></tbody>
+</table>
+
+<h2>Plot demos (check by eye)</h2>
+<div class="card plot"><canvas id="demo-sine"></canvas></div>
+<div class="card plot"><canvas id="demo-psd"></canvas></div>
+<div class="card plot"><canvas id="demo-q"></canvas></div>
+<div class="card plot"><canvas id="demo-cloud"></canvas></div>
+</main>
+<script src="js/core/rng.js"></script>
+<script src="js/core/complex.js"></script>
+<script src="js/core/mathx.js"></script>
+<script src="js/core/fft.js"></script>
+<script src="js/core/dsp.js"></script>
+<script src="js/core/filters.js"></script>
+<script src="js/core/plot.js"></script>
+<script src="js/channel.js"></script>
+<script src="js/analog/am.js"></script>
+<script src="js/ui/controls.js"></script>
+<script src="js/tests.js"></script>
+</body>
+</html>
