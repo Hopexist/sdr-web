@@ -3,7 +3,7 @@
 A software-defined radio simulator that runs entirely in the browser: AM, FM and QPSK
 modulators/demodulators, a channel model with noise and impairments, and Monte Carlo BER curves.
 
-**Status:** Phases 0–4 are done: foundations, AM, FM, the QPSK link (streaming) and the full channel model. The BER page (Phase 5) is next.
+**Status:** Phases 0–5 are done: foundations, AM, FM, the QPSK link (streaming), the full channel model and the BER page.
 
 ## No install
 
@@ -25,7 +25,7 @@ index.html            landing page
 am.html               AM simulator (interactive)
 fm.html               FM simulator (interactive)
 qpsk.html             QPSK link simulator (interactive)
-ber.html              placeholder (coming soon)
+ber.html              BER sweeps + analog SNR (Monte Carlo, workers on http)
 tests.html            test runner + plot demos
 css/style.css         layout, light/dark theme via CSS variables
 js/tests.js           tests and demos
@@ -54,7 +54,11 @@ js/audio.js   SDR.audio    Web Audio: load/decode/resample files, play/stop, vol
 js/ui/controls.js SDR.ui   sliders, selects, toggles, text, buttons, file input, URL-hash state, status bar,
                            runChunked (time-budgeted generator runner for sweeps)
 js/ui/page.js SDR.page     shared simulator-page scaffold (panel, readouts, plot cards, sources, sweeps, audio)
-js/ui/am-page.js, fm-page.js, qpsk-page.js  wiring for each page
+js/ui/qpsk-controls.js     QPSK link controls, shared by the QPSK page and the BER curve editor
+js/ber.js     SDR.ber       sweep engine: setPath/getPath, seeds, stop rules, floor skip, required Eb/N0,
+                           implementation loss, diversity slope, theory, CSV/JSON, saved runs, worker pool
+js/ber-worker.js           classic Web Worker running one sweep point (http(s) only)
+js/ui/am-page.js, fm-page.js, qpsk-page.js, ber-page.js, index-page.js  wiring for each page
 ```
 
 Script order: `rng, complex, mathx, fft, dsp, filters, plot`, then `channel`, `theory`, `digital/mapping, sequences, sync, qpsk`, `analog/*`, `audio`,
@@ -151,4 +155,21 @@ preamble/pilot estimate, the frame is found first on the timing output, so LMS c
 
 The AM and FM pages get Fading (Rayleigh/Rician, Doppler in Hz), Phase noise and ADC sections from the same channel
 code; FM has a "mobile flutter" preset (Rayleigh, fd = 50 Hz) to hear fading.
+
+## Phase 5: BER page
+
+A sweep is a QPSK link config plus a swept parameter (a path into the config: `ebn0Db`, `adc.bits`, `rx.carrier.bnT`,
+`fading.fdTs`, `pilots.spacing`, …), a list of values (`0:1:10` or `2, 4, 8`), stop rules (min errors, default 100;
+max bits; max seconds per point) and a BER floor. Each point runs frames of the streaming link until a rule fires and
+records errors, bits, BER, its Wilson 95% interval, EVM, time and what stopped it. Point i uses seed
+`deriveSeed(sweepSeed, i)`, so a sweep gives the same numbers on the main thread, in Node and in workers (points stopped
+by the time limit depend on machine speed). Upward Eb/N0 sweeps stop early once a point has 0 errors at max bits or a
+BER under the floor.
+
+Run it from file:// (main thread, `runChunked`, pause/resume/stop) or serve the folder (e.g. `python -m http.server`)
+to get a pool of up to 8 Web Workers. The page shows which mode is running. Curves are edited with the same controls as
+the QPSK page; "📈 Sweep this setup" on the QPSK page sends its setup over as a new curve. Nine presets, CSV / JSON / PNG
+export, JSON import, a saved-runs library in localStorage (falls back to memory if storage is blocked), overlaying saved
+runs, and "Copy link" (the sweep definition, not the results). The "Analog SNR" tab overlays AM envelope, AM coherent
+and FM output SNR against baseband SNR γ with theory lines.
 

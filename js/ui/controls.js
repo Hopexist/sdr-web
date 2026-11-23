@@ -46,6 +46,7 @@
   // Each slice calls next() until ~budgetMs (default 12) has passed, then yields to the browser with
   // setTimeout(0). Each yield should be a small unit of work (a few ms). The last yielded value goes
   // to onProgress. Cancel with an AbortController signal; the generator's finally blocks run.
+  // Pause with opts.isPaused() → true (checked before every slice).
   // Resolves { done, value } | { aborted } | { error }, plus { slices, maxSliceMs } for diagnostics.
   function runChunked(task, opts) {
     opts = opts || {};
@@ -62,6 +63,7 @@
           try { it.return(); } catch (e) { /* generator already closed */ }
           return finish({ aborted: true });
         }
+        if (opts.isPaused && opts.isPaused()) return setTimeout(slice, 100);   // paused: idle, don't spin
         var t0 = performance.now(), r;
         try {
           do { r = it.next(); if (!r.done) lastValue = r.value; } while (!r.done && performance.now() - t0 < budget);

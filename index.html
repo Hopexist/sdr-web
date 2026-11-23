@@ -7,22 +7,29 @@
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-<header><nav><a class="brand" href="index.html">sdr-web</a><a href="am.html">AM</a><a href="fm.html">FM</a><a href="qpsk.html">QPSK</a><a href="ber.html">BER</a><a href="tests.html">Tests</a></nav></header>
+<header><nav><a class="brand" href="index.html" aria-current="page">sdr-web</a><a href="am.html">AM</a><a href="fm.html">FM</a><a href="qpsk.html">QPSK</a><a href="ber.html">BER</a><a href="tests.html">Tests</a></nav></header>
 <main>
-<h1>sdr-web</h1>
-<p>A software-defined radio simulator that runs entirely in your browser: AM, FM and QPSK
-modulators and demodulators, a channel model with noise and impairments, and Monte Carlo
-bit-error-rate curves. No install, no server, no libraries. Just open this file.</p>
-<div class="card">
-<ul>
-<li><a href="am.html">AM</a>: amplitude modulation, envelope vs coherent detection</li>
-<li><a href="fm.html">FM</a>: frequency modulation, Carson bandwidth, threshold and clicks</li>
-<li><a href="qpsk.html">QPSK</a>: a full digital link with RRC shaping, CFO, timing and carrier recovery, frame sync</li>
-<li><a href="ber.html">BER</a>: Monte Carlo BER vs. theory <span class="muted">(coming soon)</span></li>
-<li><a href="tests.html">Tests</a>: unit tests and plot-library demos for the core DSP code</li>
-</ul>
+<h1>sdr-web: a software-defined radio in your browser</h1>
+<p>Every block of a radio link, simulated in plain JavaScript with no install, no server and no libraries.
+Modulate a message, push it through a channel with noise, fading, multipath and hardware impairments, then watch a
+receiver recover it stage by stage: matched filtering, frequency, timing and carrier recovery, equalization and
+decisions. Every number can be checked against theory, and every run is reproducible from its seed.</p>
+<div class="landing-grid">
+  <a class="landing-card" href="am.html"><canvas id="th-am" aria-hidden="true"></canvas><h2>AM</h2><p>Envelope vs coherent detection, over-modulation and the threshold effect.</p></a>
+  <a class="landing-card" href="fm.html"><canvas id="th-fm" aria-hidden="true"></canvas><h2>FM</h2><p>Bessel sidebands, Carson's rule, clicks, emphasis, and hearing a fading channel.</p></a>
+  <a class="landing-card" href="qpsk.html"><canvas id="th-qpsk" aria-hidden="true"></canvas><h2>QPSK</h2><p>A full digital link: RRC, CFO, Gardner timing, PLL, equalizers, fading and the receiver at every stage.</p></a>
+  <a class="landing-card" href="ber.html"><canvas id="th-ber" aria-hidden="true"></canvas><h2>BER</h2><p>Monte Carlo sweeps with confidence intervals against theory, implementation loss, and analog SNR curves.</p></a>
 </div>
-<p class="muted">Done so far: foundations, AM, FM and the QPSK link.</p>
+<p><a href="tests.html">Self-tests</a> (runs every DSP check in your browser) ·
+  <a href="https://github.com/Hopexist/sdr-web">Source on GitHub</a></p>
 </main>
+<script src="js/core/rng.js"></script>
+<script src="js/core/complex.js"></script>
+<script src="js/core/mathx.js"></script>
+<script src="js/core/fft.js"></script>
+<script src="js/core/dsp.js"></script>
+<script src="js/core/plot.js"></script>
+<script src="js/theory.js"></script>
+<script src="js/ui/index-page.js"></script>
 </body>
 </html>

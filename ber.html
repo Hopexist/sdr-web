@@ -3,14 +3,63 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Monte Carlo BER curves · sdr-web</title>
+<title>BER sweeps · sdr-web</title>
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-<header><nav><a class="brand" href="index.html">sdr-web</a><a href="am.html">AM</a><a href="fm.html">FM</a><a href="qpsk.html">QPSK</a><a href="ber.html">BER</a><a href="tests.html">Tests</a></nav></header>
-<main>
-<h1>Monte Carlo BER curves</h1>
-<p class="muted">Coming soon.</p>
+<header><nav><a class="brand" href="index.html">sdr-web</a><a href="am.html">AM</a><a href="fm.html">FM</a><a href="qpsk.html">QPSK</a><a href="ber.html" aria-current="page">BER</a><a href="tests.html">Tests</a></nav></header>
+<main class="wide">
+<h1>BER: Monte Carlo sweeps</h1>
+<div class="sim-layout">
+  <aside id="controls" class="panel" aria-label="Sweep builder"></aside>
+  <section class="plots" id="plots">
+    <details class="card explainer">
+      <summary>What am I looking at?</summary>
+      <p><strong>BER and Eb/N0.</strong> The bit error rate is the fraction of payload bits decoded wrong. Eb/N0 is the energy
+        per bit over the noise density: the fair way to compare schemes with different bits per symbol or bandwidth.
+        Theory curves are drawn as lines; each simulated point is a marker with its 95% confidence interval.</p>
+      <p><strong>Why ≥ 100 errors.</strong> A BER estimate from k errors has a relative uncertainty of about 1/√k. With 10
+        errors the true BER could easily be half or double, but with 100 the interval is about ±20%. Points stop at 100 errors
+        (or a bit / time limit), so low-BER points need many more bits, and the sweep stops early once the BER drops
+        below the floor you set.</p>
+      <p><strong>Confidence intervals.</strong> The error bars are Wilson 95% intervals: if the simulation is right, the theory
+        line should pass through about 19 of every 20 bars. Each point has its own seed derived from the sweep seed, so a
+        rerun gives exactly the same numbers.</p>
+      <p><strong>Implementation loss</strong> is how much more Eb/N0 the real receiver needs than theory to reach the same BER:
+        the horizontal gap at 1e-3 or 1e-4, read from the summary table. Real synchronization, finite filters and
+        estimation noise all cost a fraction of a dB each.</p>
+      <p><strong>Rayleigh's slope.</strong> In a Rayleigh fade, the probability that the channel gain is small enough to cause an
+        error falls only as 1/SNR. So the BER falls one decade per decade of SNR (10 dB): the "diversity slope" of 1 in the
+        summary, while AWGN curves dive ever more steeply. Diversity (more antennas, coding) increases that slope.</p>
+      <p><strong>Why loop bandwidth has an optimum.</strong> A carrier PLL facing phase noise has two error sources. A narrow
+        loop can't follow the oscillator's random walk and cycle-slips, while a wide loop passes more thermal noise into its
+        phase estimate. The BER vs BnT curve is therefore U-shaped, and its minimum moves to wider loops as the phase noise
+        grows.</p>
+    </details>
+  </section>
+</div>
 </main>
+<script src="js/core/rng.js"></script>
+<script src="js/core/complex.js"></script>
+<script src="js/core/mathx.js"></script>
+<script src="js/core/fft.js"></script>
+<script src="js/core/dsp.js"></script>
+<script src="js/core/filters.js"></script>
+<script src="js/core/plot.js"></script>
+<script src="js/channel.js"></script>
+<script src="js/theory.js"></script>
+<script src="js/digital/mapping.js"></script>
+<script src="js/digital/sequences.js"></script>
+<script src="js/digital/sync.js"></script>
+<script src="js/digital/equalizer.js"></script>
+<script src="js/digital/qpsk.js"></script>
+<script src="js/analog/am.js"></script>
+<script src="js/analog/fm.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/ui/controls.js"></script>
+<script src="js/ui/page.js"></script>
+<script src="js/ui/qpsk-controls.js"></script>
+<script src="js/ber.js"></script>
+<script src="js/ui/ber-page.js"></script>
 </body>
 </html>

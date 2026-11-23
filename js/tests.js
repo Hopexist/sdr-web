@@ -638,6 +638,74 @@
     check('DC blocker (pole 0.999) removes the offset to < −40 dB after settling', res < -40, res.toFixed(1) + ' dB');
   });
 
+  // ---------------- Phase 5: BER sweep engine ----------------
+  group('BER engine: paths, values, seeds', function () {
+    var B = SDR.ber, o = {};
+    B.setPath(o, 'channel.adc.bits', 4); B.setPath(o, 'ebn0Db', 3); B.setPath(o, 'channel.adc.backoffDb', 10);
+    check('setPath creates nested objects; getPath reads them', o.channel.adc.bits === 4 && B.getPath(o, 'channel.adc.bits') === 4 && B.getPath(o, 'ebn0Db') === 3 && o.channel.adc.backoffDb === 10, JSON.stringify(o));
+    check('getPath on missing keys → undefined (no throw)', B.getPath(o, 'x.y.z') === undefined && B.getPath(o, 'channel.adc.bits.more') === undefined && B.getPath(null, 'a') === undefined);
+    check('parameter aliases: adc.bits, rx.carrier.bnT, fading.fdTs, pilots.spacing', B.resolveParam('adc.bits') === 'channel.adc.bits' && B.resolveParam('rx.carrier.bnT') === 'rx.carrierBnT' &&
+      B.resolveParam('fading.fdTs') === 'channel.fading.fdTs' && B.resolveParam('pilots.spacing') === 'pilotEvery');
+    check('parseValues "0:1:4", "1, 2, 5", "0.5:0.25:1"', JSON.stringify(B.parseValues('0:1:4')) === '[0,1,2,3,4]' && JSON.stringify(B.parseValues('1, 2, 5')) === '[1,2,5]' && JSON.stringify(B.parseValues('0.5:0.25:1')) === '[0.5,0.75,1]');
+    var seen = new Set(), det = true;
+    for (var i = 0; i < 1000; i++) { seen.add(B.deriveSeed(42, i)); if (B.deriveSeed(42, i) !== B.deriveSeed(42, i)) det = false; }
+    check('deriveSeed is deterministic and different points get different seeds (1000 points)', det && seen.size === 1000 && B.deriveSeed(42, 0) !== B.deriveSeed(43, 0), seen.size + ' distinct');
+  });
+
+  var BERCFG = SDR.qpsk.withDefaults({ nBits: 20000, sps: 4, rx: IDEAL });
+  function runSweep(sw) { var it = SDR.ber.sweepTask(sw), r; while (!(r = it.next()).done) { /* drain */ } return r.value; }
+
+  group('BER engine: sweeps', function () {
+    var B = SDR.ber;
+    var sw = { cfg: BERCFG, param: 'ebn0Db', values: [2, 5], stop: { minErrors: 100, maxBits: 2e6 }, seed: 9, floorBer: 1e-7 };
+    var a = runSweep(sw), b = runSweep(sw);
+    check('same sweep run twice → identical results', JSON.stringify(a.map(function (r) { return [r.errors, r.bits]; })) === JSON.stringify(b.map(function (r) { return [r.errors, r.bits]; })),
+      a.map(function (r) { return r.errors + '/' + r.bits; }).join(', '));
+    check('stop rule: minErrors (≥ 100 errors, stoppedBy "errors")', a.every(function (r) { return r.errors >= 100 && r.stoppedBy === 'errors'; }));
+    var mb = runSweep({ cfg: BERCFG, param: 'ebn0Db', values: [11], stop: { minErrors: 100, maxBits: 40000 }, seed: 1 });
+    check('stop rule: maxBits (11 dB, max 40 000 bits)', mb[0].bits >= 40000 && mb[0].bits < 60000 && mb[0].stoppedBy === 'bits', mb[0].errors + ' errors / ' + mb[0].bits + ' bits');
+    var fl = runSweep({ cfg: BERCFG, param: 'ebn0Db', values: [11, 12, 13], stop: { minErrors: 100, maxBits: 40000 }, seed: 1, floorBer: 1e-7 });
+    check('floor skip: after 0 errors at maxBits, higher Eb/N0 points are marked "below floor"', fl[0].errors === 0 && fl[1].stoppedBy === 'floor' && fl[2].stoppedBy === 'floor' && fl[1].bits === 0,
+      fl.map(function (r) { return r.value + ': ' + r.stoppedBy; }).join(', '));
+    // Short AWGN preset. 7 independent 95% intervals all cover the truth only ~70% of the time, so the
+    // seed is fixed (seed 2; 6 of seeds 1–8 pass, as expected): the check is "the engine is unbiased".
+    var aw = runSweep({ cfg: BERCFG, param: 'ebn0Db', values: B.parseValues('0:1:6'), stop: { minErrors: 100, maxBits: 2e6 }, seed: 2, floorBer: 1e-7 });
+    aw.forEach(function (r) {
+      var th = SDR.theory.qpskAwgn(r.value);
+      check('AWGN sweep (0–6 dB, seed 2): ' + r.value + ' dB inside Wilson CI of theory', th >= r.ciLow && th <= r.ciHigh, r.errors + '/' + r.bits + ', CI [' + r.ciLow.toExponential(2) + ', ' + r.ciHigh.toExponential(2) + '], theory ' + th.toExponential(3));
+    });
+    var c1 = [{ name: 'A', param: 'ebn0Db', results: aw.map(function (r) { return Object.assign({}, r); }) }];
+    var csv = B.toCSV(c1).trim().split('\n');
+    check('CSV: header columns and one row per point', csv[0] === B.CSV_COLUMNS.join(',') && csv.length === aw.length + 1 && csv[0].split(',').length === 12, csv[0]);
+    var back = B.fromJSON(B.toJSON(c1));
+    check('JSON export → import round-trips to identical results', JSON.stringify(back.curves[0].results) === JSON.stringify(c1[0].results) && back.version === B.VERSION);
+    var thy = []; for (var x = 0; x <= 10; x += 0.25) thy.push({ value: x, ber: SDR.theory.qpskAwgn(x) });
+    var lo = 0, hi = 12; for (var k = 0; k < 60; k++) { var m = (lo + hi) / 2; if (SDR.theory.qpskAwgn(m) > 1e-4) lo = m; else hi = m; }
+    approx('requiredEbN0 at 1e-4 on a 0.25 dB theory grid (±0.01 dB of the exact value)', B.requiredEbN0(thy, 1e-4), lo, 0.01);
+    check('implementationLoss of the theory curve against itself is 0', B.implementationLoss(thy, thy, 1e-3) === 0 && B.implementationLoss(thy, thy, 1e-4) === 0);
+    var ray = []; for (x = 0; x <= 40; x += 5) ray.push({ value: x, ber: SDR.theory.qpskRayleigh(x) });
+    approx('diversitySlope of Rayleigh theory ≈ 1 decade/decade', B.diversitySlope(ray), 1, 0.05);
+  });
+
+  group('BER engine: library and workers', function () {
+    var B = SDR.ber, store = {}, fake = { getItem: function (k) { return store[k] || null; }, setItem: function (k, v) { store[k] = v; } };
+    var lib = B.createLibrary(fake, 'test.runs'), id = lib.save('run 1', { curves: [{ name: 'x', results: [] }] });
+    check('saved-runs library: save → list → load → remove', lib.available && lib.list().length === 1 && lib.load(id).curves[0].name === 'x' && (lib.remove(id), lib.list().length === 0));
+    var broken = { getItem: function () { throw new Error('denied'); }, setItem: function () { throw new Error('denied'); } };
+    var lib2 = B.createLibrary(broken, 'test.runs'), id2 = lib2.save('run', { curves: [] });
+    check('library fails gracefully when storage throws (in-memory fallback)', !lib2.available && lib2.list().length === 1 && lib2.load(id2) !== null);
+    if (!B.canUseWorkers()) {
+      check('workers vs main thread identical (skipped: workers need http(s); this page is ' + location.protocol + ')', true, 'serve with python -m http.server and reload to run it');
+      return;
+    }
+    var pool = B.createPool('js/ber-worker.js', 2), cfg = B.setPath(B.clone(BERCFG), 'ebn0Db', 3), stop = { minErrors: 100, maxBits: 2e5 };
+    var main = B.runPointSync(cfg, B.deriveSeed(5, 0), stop);
+    return pool.run({ cfg: cfg, seed: B.deriveSeed(5, 0), stop: stop }).then(function (w) {
+      pool.terminate();
+      check('worker and main-thread results identical (same seed)', w.errors === main.errors && w.bits === main.bits && w.ber === main.ber, 'worker ' + w.errors + '/' + w.bits + ', main ' + main.errors + '/' + main.bits);
+    });
+  });
+
   // ---------------- render results ----------------
   Promise.all(pending).then(render);
   function render() {

@@ -4,6 +4,7 @@
 //   const p = SDR.plot.createPlot(canvas, { title, xLabel, yLabel, xUnit, yUnit, xLim, yLim,
 //                                           yScale: 'linear' | 'log', equalAspect, annotations });
 //   p.setData([{ type: 'line', x, y, label }, { type: 'scatter', ... }, { type: 'errorbar', x, y, yLow, yHigh }]);
+//   xScale: 'log' gives a log x axis. A series may carry info[i] strings shown in the hover tooltip.
 //
 // Interaction: hover = crosshair + tooltip; wheel = zoom (Shift: x only, Alt: y only);
 // left-drag = pan; right-drag or Ctrl+drag = box zoom; double-click or ⟲ = reset;
@@ -46,6 +47,15 @@
     var a = Math.abs(v);
     if (v !== 0 && (a >= 1e5 || a < 1e-3)) return v.toExponential(Math.max(0, Math.min(3, Math.round(-Math.log10(step / a)))));
     return v.toFixed(Math.max(0, -Math.floor(Math.log10(step) + 1e-9)));
+  }
+
+  // 1-2-5 ticks for a log x axis (decades only when the range is wide).
+  function logXTicks(lo, hi, target) {
+    var e0 = Math.floor(Math.log10(lo)), e1 = Math.ceil(Math.log10(hi)), ticks = [], labels = [];
+    var mants = e1 - e0 > target ? [1] : e1 - e0 > target / 3 ? [1, 3] : [1, 2, 5];
+    for (var e = e0; e <= e1; e++) mants.forEach(function (m) { var t = m * Math.pow(10, e); if (t >= lo * 0.999 && t <= hi * 1.001) ticks.push(t); });
+    ticks.forEach(function (t) { labels.push(t >= 1e-3 && t < 1e5 ? String(+t.toPrecision(3)) : t.toExponential(0)); });
+    return { ticks: ticks, labels: labels, step: 1 };
   }
 
   function fmtPow10(e) { return '10' + String(e).split('').map(function (c) { return SUP[c]; }).join(''); }
@@ -210,9 +220,11 @@
 
     function homeView(vis) {
       var logY = opts.yScale === 'log';
-      var xr = opts.xLim || dataRange(vis, 'x', false) || [0, 1];
+      var logX = opts.xScale === 'log';
+      var xr = opts.xLim || dataRange(vis, 'x', logX) || (logX ? [1, 10] : [0, 1]);
       var x0 = xr[0], x1 = xr[1];
-      if (x0 === x1) { x0 -= 1; x1 += 1; }
+      if (x0 === x1) { if (logX) { x0 /= 2; x1 *= 2; } else { x0 -= 1; x1 += 1; } }
+      if (logX && !opts.xLim) { var lp = (Math.log10(x1) - Math.log10(x0)) * 0.04; x0 /= Math.pow(10, lp); x1 *= Math.pow(10, lp); }
       var y0, y1, yr;
       if (logY) {
         yr = opts.yLim || dataRange(vis, 'y', true) || [1e-6, 1];
@@ -250,29 +262,31 @@
       ctx.fillStyle = th.bg;
       ctx.fillRect(0, 0, W, H);
 
-      var logY = opts.yScale === 'log';
+      var logY = opts.yScale === 'log', logX = opts.xScale === 'log';
       var T = logY ? Math.log10 : function (v) { return v; };
+      var TX = logX ? Math.log10 : function (v) { return v; };   // x is handled in transformed units (log10 for a log axis)
       var mL = opts.yLabel ? 72 : 58, mR = 16, mT = opts.title ? 32 : 12, mB = opts.xLabel ? 46 : 28;
       var pl = mL, pt = mT, pW = W - mL - mR, pH = H - mT - mB;
       if (pW < 20 || pH < 20) return;
 
       var vis = visibleSeries();
       var v = view || homeView(vis);
-      var x0 = v.x0, x1 = v.x1, ty0 = T(v.y0), ty1 = T(v.y1);
+      var x0 = TX(v.x0), x1 = TX(v.x1), ty0 = T(v.y0), ty1 = T(v.y1);
       if (opts.equalAspect && !logY) {
         var u = Math.max((x1 - x0) / pW, (ty1 - ty0) / pH), cx = (x0 + x1) / 2, cy = (ty0 + ty1) / 2;
         x0 = cx - (u * pW) / 2; x1 = cx + (u * pW) / 2;
         ty0 = cy - (u * pH) / 2; ty1 = cy + (u * pH) / 2;
       }
       var y0 = logY ? Math.pow(10, ty0) : ty0, y1 = logY ? Math.pow(10, ty1) : ty1;
-      L = { pl: pl, pt: pt, pW: pW, pH: pH, x0: x0, x1: x1, ty0: ty0, ty1: ty1, logY: logY, W: W, H: H };
+      L = { pl: pl, pt: pt, pW: pW, pH: pH, x0: x0, x1: x1, ty0: ty0, ty1: ty1, logY: logY, logX: logX, W: W, H: H };
+      var dx0 = logX ? Math.pow(10, x0) : x0, dx1 = logX ? Math.pow(10, x1) : x1;   // visible x range in data units
 
-      function sx(val) { return pl + ((val - x0) / (x1 - x0)) * pW; }
+      function sx(val) { return pl + ((TX(val) - x0) / (x1 - x0)) * pW; }
       function sy(val) { return pt + (1 - (T(val) - ty0) / (ty1 - ty0)) * pH; }
       L.sx = sx; L.sy = sy;
 
       // ticks
-      var xt = linearTicks(x0, x1, Math.max(2, Math.floor(pW / 80)));
+      var xt = logX ? logXTicks(dx0, dx1, Math.max(2, Math.floor(pW / 70))) : linearTicks(x0, x1, Math.max(2, Math.floor(pW / 80)));
       var yMajor = [], yMinor = [], yLabels = [];
       if (logY) {
         var ea = Math.ceil(ty0 - 1e-9), eb = Math.floor(ty1 + 1e-9), nd = eb - ea + 1;
@@ -323,7 +337,7 @@
       ctx.fillStyle = th.fg;
       ctx.font = MONO;
       ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      xt.ticks.forEach(function (t) { ctx.fillText(fmtLinear(t, xt.step), sx(t), pt + pH + 5); });
+      xt.ticks.forEach(function (t, i) { ctx.fillText(xt.labels ? xt.labels[i] : fmtLinear(t, xt.step), sx(t), pt + pH + 5); });
       ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
       yMajor.forEach(function (t, i) { ctx.fillText(yLabels[i], pl - 6, sy(t)); });
 
@@ -353,7 +367,7 @@
       drawn = [];
       function ok(yv) { return isFinite(yv) && (!logY || yv > 0); }
       vis.forEach(function (s) {
-        var color = colorOf(s), idx = drawIndices(s, x0, x1);
+        var color = colorOf(s), idx = drawIndices(s, dx0, dx1);
         drawn.push({ s: s, idx: idx });
         ctx.strokeStyle = color; ctx.fillStyle = color;
         if (s.type === 'line' || !s.type) {
@@ -364,7 +378,7 @@
           var pen = false;
           for (var k = 0; k < idx.length; k++) {
             var i = idx[k], xv = getX(s, i), yv = s.y[i];
-            if (!isFinite(xv) || !ok(yv)) { pen = false; continue; }
+            if (!isFinite(xv) || !ok(yv) || (logX && xv <= 0)) { pen = false; continue; }
             if (pen) ctx.lineTo(sx(xv), sy(yv)); else ctx.moveTo(sx(xv), sy(yv));
             pen = true;
           }
@@ -460,7 +474,8 @@
     function setViewT(x0, x1, ty0, ty1) {
       if (!(x1 > x0) || !(ty1 > ty0) || !isFinite(x0 + x1 + ty0 + ty1)) return;
       var inv = L.logY ? function (t) { return Math.pow(10, t); } : function (t) { return t; };
-      view = { x0: x0, x1: x1, y0: inv(ty0), y1: inv(ty1) };
+      var invX = L.logX ? function (t) { return Math.pow(10, t); } : function (t) { return t; };
+      view = { x0: invX(x0), x1: invX(x1), y0: inv(ty0), y1: inv(ty1) };
       schedule();
     }
     function zoomAt(px, py, fx, fy) {
@@ -483,13 +498,13 @@
       octx.moveTo(L.pl, Math.round(py) + 0.5); octx.lineTo(L.pl + L.pW, Math.round(py) + 0.5);
       octx.stroke(); octx.setLineDash([]);
 
-      var c = toData(px, py), rows = [];
+      var c = toData(px, py), rows = [], cxData = L.logX ? Math.pow(10, c.x) : c.x;
       drawn.forEach(function (d) {
         var s = d.s, best = -1;
         if (isSorted(s) && (s.type === 'line' || !s.type || s.type === 'errorbar')) {
-          var i = lowerBound(s, c.x);
+          var i = lowerBound(s, cxData);
           [i - 1, i].forEach(function (j) {
-            if (j >= 0 && j < s.y.length && (best < 0 || Math.abs(getX(s, j) - c.x) < Math.abs(getX(s, best) - c.x))) best = j;
+            if (j >= 0 && j < s.y.length && (best < 0 || Math.abs(getX(s, j) - cxData) < Math.abs(getX(s, best) - cxData))) best = j;
           });
         } else {
           var bd = Infinity;
@@ -502,7 +517,7 @@
         var bx = getX(s, best), by = s.y[best];
         octx.fillStyle = colorOf(s);
         octx.beginPath(); octx.arc(L.sx(bx), L.sy(by), 3.5, 0, 2 * Math.PI); octx.fill();
-        rows.push({ c: colorOf(s), label: s.label || 'series', x: bx, y: by });
+        rows.push({ c: colorOf(s), label: s.label || 'series', x: bx, y: by, extra: s.info ? s.info[best] : '' });
       });
 
       tip.textContent = '';
@@ -511,7 +526,7 @@
         var line = el('div');
         var sw = el('span', 'sw'); sw.style.background = r.c;
         line.appendChild(sw);
-        line.appendChild(document.createTextNode(r.label + ': ' + fmtValue(r.x, xs, false, opts.xUnit) + ', ' + fmtValue(r.y, ys, L.logY, opts.yUnit)));
+        line.appendChild(document.createTextNode(r.label + ': ' + fmtValue(r.x, xs, L.logX, opts.xUnit) + ', ' + fmtValue(r.y, ys, L.logY, opts.yUnit) + (r.extra ? '  ' + r.extra : '')));
         tip.appendChild(line);
       });
       tip.hidden = !rows.length;
@@ -656,7 +671,7 @@
         vis.forEach(function (s, si) {
           for (var i = 0; i < s.y.length; i++) {
             var xv = getX(s, i);
-            if (L && (xv < L.x0 || xv > L.x1)) continue;
+            if (L && ((L.logX ? Math.log10(xv) : xv) < L.x0 || (L.logX ? Math.log10(xv) : xv) > L.x1)) continue;
             var row = [csvField(s.label || 'series ' + (si + 1)), xv, s.y[i]];
             if (err) row.push(s.yLow ? s.yLow[i] : '', s.yHigh ? s.yHigh[i] : '');
             lines.push(row.join(','));

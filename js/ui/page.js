@@ -28,8 +28,9 @@
     var controls = [];
     var fileMsg = null, fileMissing = false, last = null, src = null, sections = [];
 
-    // Readouts card + interaction hint at the top of the plot column.
+    // Readouts card + interaction hint at the top of the plot column (readouts: false → no readouts card).
     var card = el('div', 'card readouts');
+    if (o.readouts === false) card.hidden = true;
     card.setAttribute('aria-live', 'polite');
     var dl = el('dl'), readEls = {};
     (o.readouts || []).forEach(function (r) {
