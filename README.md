@@ -3,7 +3,7 @@
 A software-defined radio simulator that runs entirely in the browser: AM, FM and QPSK
 modulators/demodulators, a channel model with noise and impairments, and Monte Carlo BER curves.
 
-**Status:** Phases 0–2 are done: the foundations, the AM page and the FM page. QPSK and BER are next.
+**Status:** Phases 0–3 are done: foundations, AM, FM and the QPSK link. The BER page (Phase 5) and more channel impairments (Phase 4) are next.
 
 ## No install
 
@@ -24,7 +24,7 @@ Because it has to run from `file://`:
 index.html            landing page
 am.html               AM simulator (interactive)
 fm.html               FM simulator (interactive)
-qpsk.html             placeholder (coming soon)
+qpsk.html             QPSK link simulator (interactive)
 ber.html              placeholder (coming soon)
 tests.html            test runner + plot demos
 css/style.css         layout, light/dark theme via CSS variables
@@ -35,21 +35,26 @@ js/core/                          pure DSP, no DOM (except plot.js)
   mathx.js    SDR.mathx    erfc, Q, dB conversions, nextPow2, linspace
   fft.js      SDR.fft      radix-2 fft/ifft (in place), fftshift
   dsp.js      SDR.dsp      convolve, upsample, decimate, windows, welchPSD
-  filters.js  SDR.filters  Kaiser lowpass (memoized), causal FIR (FFT overlap-add), complex FIR, polyphase
+  filters.js  SDR.filters  RRC taps, windowed-sinc fractional delay / resample, Kaiser lowpass (memoized), causal FIR (FFT overlap-add), complex FIR, polyphase
                            interpolate / decimateFiltered, first-order bilinear sections, DC blocker
   plot.js     SDR.plot     interactive Canvas 2D plots (the one DOM exception, see below)
 js/channel.js SDR.channel  AWGN at a given CNR, carrier phase offset (to be expanded)
 js/analog/am.js SDR.am     AM modulate, envelope/coherent demod (no DOM)
 js/analog/fm.js SDR.fm     FM transmit/receive chain, discriminator, PLL demod, emphasis, clicks, theory (no DOM)
-js/digital/sync.js SDR.sync  generic 2nd-order PLL (reused by QPSK later)
+js/digital/sync.js SDR.sync  PLL (pluggable detector), loop gains from BnT/ζ, Gardner + Farrow timing loop,
+                           4th-power CFO estimator, lock detection
+js/digital/mapping.js SDR.mapping  Gray QPSK map, hard/LLR demap, differential encode/decode
+js/digital/sequences.js SDR.seq    LFSR m-sequences (degree 5–10), 64-symbol preamble
+js/digital/qpsk.js SDR.qpsk  transmitter, receiver and runLink(cfg, rng): the whole link as one pure function
+js/theory.js SDR.theory      QPSK BER (AWGN, static phase error, DE-QPSK), Wilson interval
 js/audio.js   SDR.audio    Web Audio: load/decode/resample files, play/stop, volume
 js/ui/controls.js SDR.ui   sliders, selects, toggles, text, buttons, file input, URL-hash state, status bar,
                            runChunked (time-budgeted generator runner for sweeps)
 js/ui/page.js SDR.page     shared simulator-page scaffold (panel, readouts, plot cards, sources, sweeps, audio)
-js/ui/am-page.js, fm-page.js  wiring for am.html / fm.html
+js/ui/am-page.js, fm-page.js, qpsk-page.js  wiring for each page
 ```
 
-Script order: `rng, complex, mathx, fft, dsp, filters, plot`, then `channel`, `digital/sync`, `analog/*`, `audio`,
+Script order: `rng, complex, mathx, fft, dsp, filters, plot`, then `channel`, `theory`, `digital/mapping, sequences, sync, qpsk`, `analog/*`, `audio`,
 `ui/controls`, `ui/page`, and finally the page script.
 
 ### plot.js is the one DOM exception in js/core/
@@ -101,4 +106,23 @@ and the AM (DSB-SC) reference.
 Sample rates: audio fsA = 48 kHz; RF baseband fsR = 384 kHz (8×). **CNR on the FM page** is carrier power (1)
 over the noise power inside the IF bandwidth B_T. Above threshold the output SNR is
 3·Pm·(Δf/W)²·(B_T/W)·CNR, which for a tone with Carson B_T is the textbook 3β²(β+1)·CNR.
+
+## Using the QPSK page
+
+Start with a preset ("Ideal link", "Phase offset only", "CFO + timing", "Everything on", "Loop too wide", "Loop too narrow"),
+then change one thing at a time. Each receiver stage (coarse CFO, timing, carrier, frame sync) can be **Real** (it
+estimates) or **Ideal** (a genie uses the true channel value), so you can isolate one block. The six constellations show
+the signal after each stage, coloured early → late. The loop traces compare every estimate with the true value (dashed).
+"▶ Live" sends new frames continuously; "Quick BER check" runs until 100 errors or 10⁶ bits and shows a 95% Wilson
+interval next to theory. Switch the payload to Text to send a message and see which characters arrive wrong.
+
+**Digital-link conventions** (tested): symbols (±1 ± j)/√2 so Es = 1; RRC taps with Σg² = 1; complex AWGN per sample with
+variance N0 = 1/(Es/N0), Es/N0 = Eb/N0 + 3.01 dB. Per-sample SNR = Es/N0 − 10·log10(sps)
+(`SDR.channel.snrPerSampleDb`). Frames are [512 random lead-in symbols | 64-symbol preamble | payload | tail]; the lead-in
+lets the loops lock before the preamble. Loop gains: θ = BnT/(ζ + 1/(4ζ)), K1 = 4ζθ/((1 + 2ζθ + θ²)·Kp),
+K2 = 4θ²/((1 + 2ζθ + θ²)·Kp). Gardner's Kp is **measured** from its S-curve (cached per roll-off/sps/span); the
+decision-directed carrier detector uses the analytic Kp = 1.
+
+`SDR.qpsk.runLink(cfg, rng)` is the whole link as one pure function (the BER page will call it). With 10,000 payload bits
+it takes ≈ 30 ms at sps 8 with ideal sync and ≈ 105 ms with all stages real and all impairments on (≈ 17 / 45 ms at sps 4).
 

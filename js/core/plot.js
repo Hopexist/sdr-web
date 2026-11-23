@@ -14,6 +14,8 @@
 //   { type: 'band', x0, x1, label, color }   shaded x-interval
 //   { type: 'text', x, y, text, color }      label (y omitted → top of plot)
 //   { type: 'vline', x, label, color }
+//   { type: 'hline', y, label, color, dash }
+// Series options: color, label, lineWidth, dash (lines), radius (points), alpha (lines and points).
 (function () {
   'use strict';
   var SDR = (window.SDR = window.SDR || {});
@@ -357,6 +359,7 @@
         if (s.type === 'line' || !s.type) {
           ctx.lineWidth = s.lineWidth || 1.5; ctx.lineJoin = 'round';
           if (s.dash) ctx.setLineDash(s.dash);
+          if (s.alpha) ctx.globalAlpha = s.alpha;
           ctx.beginPath();
           var pen = false;
           for (var k = 0; k < idx.length; k++) {
@@ -367,6 +370,7 @@
           }
           ctx.stroke();
           ctx.setLineDash([]);
+          ctx.globalAlpha = 1;
           return;
         }
         var r = s.radius || 2.5;
@@ -407,6 +411,12 @@
           ctx.strokeStyle = a.color || th.axis; ctx.setLineDash([4, 3]); ctx.lineWidth = 1;
           ctx.beginPath(); ctx.moveTo(px, pt); ctx.lineTo(px, pt + pH); ctx.stroke(); ctx.setLineDash([]);
           if (a.label) { ctx.fillStyle = th.fg; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(a.label, px + 4, pt + 4); }
+        } else if (a.type === 'hline') {
+          if (!ok(a.y)) return;
+          var py = Math.round(sy(a.y)) + 0.5;
+          ctx.strokeStyle = a.color || th.axis; ctx.setLineDash(a.dash || [4, 3]); ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(pl, py); ctx.lineTo(pl + pW, py); ctx.stroke(); ctx.setLineDash([]);
+          if (a.label) { ctx.fillStyle = th.fg; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom'; ctx.fillText(a.label, pl + 4, py - 2); }
         } else if (a.type === 'text') {
           var ty = a.y === undefined || !ok(a.y) ? pt + 6 : sy(a.y) - 4;
           ctx.fillStyle = a.color || th.fg; ctx.textAlign = 'center'; ctx.textBaseline = a.y === undefined ? 'top' : 'bottom';

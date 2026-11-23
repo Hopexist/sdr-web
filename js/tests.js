@@ -404,6 +404,134 @@
     return Promise.all([p1, p2]);
   });
 
+  // ---------------- Phase 3: QPSK ----------------
+  var IDEAL = { cfo: 'ideal', timing: 'ideal', carrier: 'ideal', frame: 'ideal' };
+  function runUntil(cfg, minErr, maxBits, seed) {
+    var rng = SDR.rng.createRng(seed), e = 0, n = 0;
+    while (e < minErr && n < maxBits) { var r = SDR.qpsk.runLink(cfg, rng); e += r.errors; n += r.bitsTx.length; }
+    return { e: e, n: n, ber: e / n, ci: SDR.theory.wilsonInterval(e, n) };
+  }
+  function inCi(th, r) { return th >= r.ci[0] && th <= r.ci[1]; }
+  function ciText(r, th) { return 'BER ' + r.ber.toExponential(3) + ' (' + r.e + '/' + r.n + '), CI [' + r.ci[0].toExponential(2) + ', ' + r.ci[1].toExponential(2) + '], theory ' + th.toExponential(3); }
+
+  group('QPSK mapping', function () {
+    var bits = SDR.rng.createRng(31).randomBits(2000), s = SDR.mapping.qpskMap(bits), back = SDR.mapping.qpskDemapHard(s), same = true;
+    for (var i = 0; i < bits.length; i++) if (bits[i] !== back[i]) same = false;
+    check('map → hard demap round trip', same);
+    approx('mean |s|² = 1 (Es = 1)', SDR.cx.power(s), 1, 1e-12);
+    // Points in angular order: 00 (45°), 10 (135°), 11 (225°), 01 (315°). Each pair of neighbours must differ by one bit.
+    var order = [[0, 0], [1, 0], [1, 1], [0, 1]], ok = true, detail = [];
+    for (var a = 0; a < 4; a++) {
+      var A = order[a], B = order[(a + 1) % 4];
+      var pa = SDR.mapping.qpskMap(Uint8Array.from(A)), pb = SDR.mapping.qpskMap(Uint8Array.from(B));
+      var ang = Math.atan2(pb.im[0], pb.re[0]) - Math.atan2(pa.im[0], pa.re[0]);
+      ang = ((ang % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+      var diff = (A[0] !== B[0]) + (A[1] !== B[1]);
+      if (Math.abs(ang - Math.PI / 2) > 1e-9 || diff !== 1) ok = false;
+      detail.push(A.join('') + '→' + B.join('') + ' ' + Math.round(ang * 180 / Math.PI) + '°');
+    }
+    check('Gray: 90°-adjacent points differ in exactly one bit', ok, detail.join(', '));
+    var llr = SDR.mapping.qpskDemapLlr({ re: Float64Array.from([0.5]), im: Float64Array.from([-0.25]) }, 0.1);
+    approx('LLR = 2√2·y/N0 (I axis)', llr[0], 2 * Math.SQRT2 * 0.5 / 0.1, 1e-12);
+    var enc = SDR.mapping.diffEncode(bits, 0), rotOk = true;
+    [0, 1, 2, 3].forEach(function (q) {
+      var rr = SDR.cx.rotate(enc, q * Math.PI / 2), rref = { re: Math.cos(Math.PI / 4 + q * Math.PI / 2), im: Math.sin(Math.PI / 4 + q * Math.PI / 2) };
+      var dec = SDR.mapping.diffDecode(rr, rref);
+      for (var k = 0; k < bits.length; k++) if (dec[k] !== bits[k]) rotOk = false;
+    });
+    check('differential encode/decode round trip under 0/90/180/270° rotation', rotOk);
+  });
+
+  group('LFSR', function () {
+    [5, 6, 7, 8, 9, 10].forEach(function (m) {
+      var s = SDR.seq.mseq(m), N = s.length, ones = 0, i, k, ok = true;
+      for (i = 0; i < N; i++) ones += s[i];
+      // Periodic autocorrelation of the ±1 version: N at lag 0, −1 at every other lag.
+      for (k = 1; k < N && ok; k++) { var acc = 0; for (i = 0; i < N; i++) acc += (1 - 2 * s[i]) * (1 - 2 * s[(i + k) % N]); if (acc !== -1) ok = false; }
+      check('m-sequence degree ' + m + ': period ' + N + ' = 2^m − 1, ' + ones + ' ones, autocorrelation −1 off-peak', N === (1 << m) - 1 && ones === 1 << (m - 1) && ok);
+    });
+  });
+
+  group('RRC', function () {
+    [0.2, 0.35, 0.5].forEach(function (b) {
+      var h = SDR.filters.rrcTaps(b, 8, 16), e = 0, i;
+      for (i = 0; i < h.taps.length; i++) e += h.taps[i] * h.taps[i];
+      var p = SDR.dsp.convolve(h.taps, h.taps, 'full'), c = 2 * h.groupDelay, isi = 0;
+      for (var k = 1; c + k * 8 < p.length; k++) isi += p[c + k * 8] * p[c + k * 8] + p[c - k * 8] * p[c - k * 8];
+      var isiDb = 10 * Math.log10(isi / (p[c] * p[c]));
+      check('RRC β = ' + b + ': unit energy, odd length, RRC∗RRC ISI < −40 dB (span 16)', Math.abs(e - 1) < 1e-12 && h.taps.length % 2 === 1 && isiDb < -40, 'ISI ' + isiDb.toFixed(1) + ' dB, N = ' + h.taps.length);
+    });
+    var hs = SDR.filters.rrcTaps(0.25, 4, 8); // t = ±Ts/(4β) = ±1 symbol lands exactly on a tap
+    check('RRC special case t = ±Ts/(4β) is finite', Array.prototype.every.call(hs.taps, isFinite));
+  });
+
+  group('Channel conventions', function () {
+    [4, 8].forEach(function (sps) {
+      var rng = SDR.rng.createRng(9), tx = SDR.qpsk.transmit(Object.assign({}, SDR.qpsk.DEFAULTS, { sps: sps, nBits: 200000 }), rng);
+      var y = SDR.channel.addAwgnEbN0(tx.x, 6, { bitsPerSymbol: 2, sps: sps }, rng), L = tx.x.re.length;
+      var ps = SDR.cx.power({ re: tx.x.re.subarray(2000, L - 2000), im: tx.x.im.subarray(2000, L - 2000) }), pn = SDR.cx.power(SDR.cx.sub(y, tx.x));
+      approx('per-sample SNR = Es/N0 − 10·log10(sps) at sps ' + sps + ' (±0.1 dB)', 10 * Math.log10(ps / pn), SDR.channel.snrPerSampleDb(6, 2, sps), 0.1);
+    });
+    var x = tone(4000, 2400, 48000), d = 3.37, y2 = SDR.filters.fractionalDelay(x, d), e = 0, p = 0;
+    for (var n = 100; n < 3900; n++) { var r = Math.sin(2 * Math.PI * 2400 * (n - d) / 48000); e += (y2[n] - r) * (y2[n] - r); p += r * r; }
+    var eDb = 10 * Math.log10(e / p);
+    check('fractionalDelay 3.37 samples on an in-band tone (0.05 fs) < −50 dB', eDb < -50, 'error ' + eDb.toFixed(1) + ' dB');
+    var z = SDR.channel.apply({ re: Float64Array.from([1, 2]), im: new Float64Array(2) }, [{ type: 'phase', deg: 90 }, { type: 'awgn', enabled: false }], null);
+    check('channel.apply: composable list, disabled entries skipped', Math.abs(z.im[1] - 2) < 1e-12 && Math.abs(z.re[1]) < 1e-12);
+  });
+
+  group('QPSK link', function () {
+    [2, 4, 8].forEach(function (sps) {
+      var r = SDR.qpsk.runLink({ noise: false, sps: sps, rx: IDEAL }, SDR.rng.createRng(1));
+      check('noiseless loopback, all stages ideal, sps ' + sps + ': 0 errors', r.errors === 0, r.errors + ' errors, EVM ' + r.evmDb.toFixed(1) + ' dB');
+    });
+    var cases = [['phase 0°', { phaseDeg: 0 }], ['phase 90°', { phaseDeg: 90 }], ['phase 180°', { phaseDeg: 180 }], ['phase 270°', { phaseDeg: 270 }],
+      ['CFO +0.02 Rs', { cfoRs: 0.02 }], ['CFO −0.02 Rs', { cfoRs: -0.02 }], ['timing 0.1', { timingSym: 0.1 }], ['timing 0.5', { timingSym: 0.5 }],
+      ['timing 0.9', { timingSym: 0.9 }], ['drift +100 ppm', { driftPpm: 100 }], ['drift −100 ppm', { driftPpm: -100 }]];
+    cases.forEach(function (c) {
+      var r = SDR.qpsk.runLink({ noise: false, sps: 4, channel: c[1] }, SDR.rng.createRng(2));
+      check('noiseless, all stages real, ' + c[0] + ': 0 errors after lock', r.errors === 0 && r.lock.timing.locked && r.lock.carrier.locked,
+        r.errors + ' errors; timing lock ' + r.lock.timing.convergence + ' sym, carrier lock ' + r.lock.carrier.convergence + ' sym');
+    });
+    var txt = 'Hello from Buffalo!', rt = SDR.qpsk.runLink({ noise: false, sps: 4, bits: SDR.qpsk.textToBits(txt), channel: { phaseDeg: 70, cfoRs: 0.01, timingSym: 0.3 } }, SDR.rng.createRng(3));
+    var back = SDR.qpsk.bitsToText(rt.bitsRx);
+    check('text mode: "' + txt + '" round-trips exactly (no noise, real sync)', back === txt, JSON.stringify(back));
+    var rd = SDR.qpsk.runLink({ noise: false, sps: 4, diff: true, channel: { phaseDeg: 130 } }, SDR.rng.createRng(4));
+    check('differential mode, noiseless, phase 130°: 0 errors', rd.errors === 0, rd.errors + ' errors');
+
+    var cfoR = SDR.qpsk.runLink({ ebn0Db: 10, sps: 4, nBits: 20000, channel: { cfoRs: 0.0371 } }, SDR.rng.createRng(5));
+    check('4th-power CFO estimate within 1e-3 Rs (10 dB, true 0.0371 Rs)', Math.abs(cfoR.est.fHat * 4 - 0.0371) < 1e-3, 'estimate ' + (cfoR.est.fHat * 4).toFixed(6) + ' Rs');
+    var g = SDR.qpsk.runLink({ noise: false, sps: 4, channel: { timingSym: 0.5 } }, SDR.rng.createRng(6));
+    check('Gardner converges within 500 symbols (default BnT, offset 0.5)', g.lock.timing.locked && g.lock.timing.convergence < 500, g.lock.timing.convergence + ' symbols');
+    var pl = SDR.qpsk.runLink({ noise: false, sps: 4, channel: { phaseDeg: 40 } }, SDR.rng.createRng(7));
+    check('carrier PLL locks within 300 symbols (default BnT, 40°)', pl.lock.carrier.locked && pl.lock.carrier.convergence < 300, pl.lock.carrier.convergence + ' symbols');
+  });
+
+  group('QPSK BER vs theory', function () {
+    // Symbol level, no pulse shaping: complex noise of variance N0 per symbol.
+    [0, 4, 7].forEach(function (eb, idx) {
+      var rng = SDR.rng.createRng(40 + idx), N0 = Math.pow(10, -SDR.channel.esn0Db(eb, 2) / 10), e = 0, n = 0;
+      while (e < 200) {
+        var bits = rng.randomBits(20000), s = SDR.mapping.qpskMap(bits), y = SDR.cx.add(s, rng.randnComplex(s.re.length, N0)), d = SDR.mapping.qpskDemapHard(y);
+        for (var i = 0; i < bits.length; i++) if (d[i] !== bits[i]) e++;
+        n += bits.length;
+      }
+      var r = { e: e, n: n, ber: e / n, ci: SDR.theory.wilsonInterval(e, n) }, th = SDR.theory.qpskAwgn(eb);
+      check('symbol-level AWGN BER at ' + eb + ' dB inside Wilson 95% CI of theory (≥200 errors)', inCi(th, r), ciText(r, th));
+    });
+    [0, 4, 7].forEach(function (eb) {
+      var r = runUntil({ ebn0Db: eb, sps: 4, nBits: 100000, rx: IDEAL }, 200, 5e6, 50 + eb), th = SDR.theory.qpskAwgn(eb);
+      check('full RRC link, ideal sync, ' + eb + ' dB: inside Wilson CI of theory', inCi(th, r), ciText(r, th));
+    });
+    var rs = runUntil({ ebn0Db: 8, sps: 4, nBits: 100000 }, 1e9, 500000, 5), eq = SDR.theory.qpskEbn0ForBer(rs.ber);
+    check('real sync at 8 dB: implementation loss < 0.5 dB', 8 - eq < 0.5 && rs.e > 30, 'BER ' + rs.ber.toExponential(3) + ' (' + rs.e + ' errors) ≙ ' + eq.toFixed(2) + ' dB → loss ' + (8 - eq).toFixed(2) + ' dB');
+    var ph = runUntil({ ebn0Db: 6, sps: 4, nBits: 100000, channel: { phaseDeg: 20 }, rx: { cfo: 'ideal', timing: 'ideal', carrier: 'off', frame: 'ideal' } }, 300, 5e6, 7);
+    var thp = SDR.theory.qpskPhaseError(6, 20 * Math.PI / 180);
+    check('static phase error 20° (carrier off), 6 dB: matches qpskPhaseError', inCi(thp, ph), ciText(ph, thp));
+    var w = SDR.theory.wilsonInterval(10, 100);
+    check('wilsonInterval(10, 100) ≈ [0.0552, 0.1744]', Math.abs(w[0] - 0.0552) < 1e-3 && Math.abs(w[1] - 0.1744) < 1e-3, w.map(function (v) { return v.toFixed(4); }).join(', '));
+  });
+
   // ---------------- render results ----------------
   Promise.all(pending).then(render);
   function render() {

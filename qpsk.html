@@ -7,10 +7,57 @@
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-<header><nav><a class="brand" href="index.html">sdr-web</a><a href="am.html">AM</a><a href="fm.html">FM</a><a href="qpsk.html">QPSK</a><a href="ber.html">BER</a><a href="tests.html">Tests</a></nav></header>
-<main>
-<h1>QPSK modem</h1>
-<p class="muted">Coming soon.</p>
+<header><nav><a class="brand" href="index.html">sdr-web</a><a href="am.html">AM</a><a href="fm.html">FM</a><a href="qpsk.html" aria-current="page">QPSK</a><a href="ber.html">BER</a><a href="tests.html">Tests</a></nav></header>
+<main class="wide">
+<h1>QPSK: a complete digital link</h1>
+<div class="sim-layout">
+  <aside id="controls" class="panel" aria-label="Simulation controls"></aside>
+  <section class="plots" id="plots">
+    <details class="card explainer">
+      <summary>What am I looking at?</summary>
+      <p><strong>QPSK and Gray coding.</strong> Each symbol carries two bits as one of four phases, (±1 ± j)/√2, normalized so
+        the average symbol energy Es = 1. Gray coding puts bit pairs that differ in one bit next to each other, so the most
+        likely mistake (to a neighbour, 90° away) costs one bit, not two. That gives the classic BER = Q(√(2·Eb/N0)).</p>
+      <p><strong>RRC and the matched filter.</strong> Symbols are shaped by a root-raised-cosine pulse, and the receiver filters
+        with the same pulse. Together they make a raised cosine, which is zero at every other symbol instant (no
+        inter-symbol interference), and the matched filter maximizes SNR at the sampling instant. The roll-off β trades
+        bandwidth ((1 + β)·Rs, the shaded band on the spectrum) against how forgiving the eye is to timing errors.</p>
+      <p><strong>The eye diagram</strong> overlays two-symbol slices of the filtered signal. A wide-open "eye" at the
+        strobe means clean decisions; noise closes it vertically, timing jitter horizontally, and a residual carrier
+        rotation smears I into Q.</p>
+      <p><strong>Coarse CFO by the 4th power.</strong> Raising a QPSK sample to the 4th power maps all four points to the same
+        value (−1), wiping out the data and leaving a pure tone at 4× the frequency offset. One FFT finds it.</p>
+      <p><strong>Gardner timing recovery.</strong> With two samples per symbol (the strobe and the midpoint between symbols),
+        the Gardner detector Re{m*·(y<sub>k−1</sub> − y<sub>k</sub>)} tells whether we sample early or late, and it works
+        before the carrier is fixed. A loop filter steers an NCO-style strobe, and a cubic Farrow interpolator produces samples
+        at the exact fractional times. Its gain Kp is measured from the S-curve.</p>
+      <p><strong>The carrier PLL</strong> compares each symbol with its nearest constellation point (decision-directed) and
+        steers a phase/frequency estimate with a second-order loop. Because QPSK looks the same after a 90° turn, the PLL can
+        lock with a 0/90/180/270° error. Correlating with the known 64-symbol preamble finds the frame start, and its phase
+        reveals which of the four it is. Differential encoding sidesteps the problem instead, at about twice the BER.</p>
+      <p><strong>Loop bandwidth.</strong> BnT sets how fast each loop reacts. Wide loops lock quickly and follow drift, but
+        pass more noise (jittery estimates, even cycle slips). Narrow loops are quiet but slow, and may never catch up with a
+        frequency offset or clock drift. Try the "Loop too wide" and "Loop too narrow" presets.</p>
+    </details>
+  </section>
+</div>
 </main>
+<script src="js/core/rng.js"></script>
+<script src="js/core/complex.js"></script>
+<script src="js/core/mathx.js"></script>
+<script src="js/core/fft.js"></script>
+<script src="js/core/dsp.js"></script>
+<script src="js/core/filters.js"></script>
+<script src="js/core/plot.js"></script>
+<script src="js/channel.js"></script>
+<script src="js/theory.js"></script>
+<script src="js/digital/mapping.js"></script>
+<script src="js/digital/sequences.js"></script>
+<script src="js/digital/sync.js"></script>
+<script src="js/digital/qpsk.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/ui/controls.js"></script>
+<script src="js/ui/page.js"></script>
+<script src="js/ui/qpsk-page.js"></script>
 </body>
 </html>

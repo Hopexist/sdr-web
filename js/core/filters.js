@@ -166,7 +166,80 @@
     return y;
   }
 
+  // Root-raised-cosine taps: roll-off β, sps samples/symbol, span in symbols. Closed form with the
+  // t = 0 and t = ±Ts/(4β) special cases. Odd length (integer group delay), unit energy Σg² = 1.
+  var rrcCache = {};
+  function rrcTaps(beta, sps, span) {
+    var key = beta + '|' + sps + '|' + span;
+    if (rrcCache[key]) return rrcCache[key];
+    var N = span * sps + 1;
+    if (N % 2 === 0) N++;
+    var M = (N - 1) / 2, taps = new Float64Array(N), e = 0, PI = Math.PI;
+    for (var n = 0; n < N; n++) {
+      var t = (n - M) / sps, h;
+      if (t === 0) h = 1 - beta + (4 * beta) / PI;
+      else if (beta > 0 && Math.abs(Math.abs(t) - 1 / (4 * beta)) < 1e-9) {
+        h = (beta / Math.SQRT2) * ((1 + 2 / PI) * Math.sin(PI / (4 * beta)) + (1 - 2 / PI) * Math.cos(PI / (4 * beta)));
+      } else {
+        h = (Math.sin(PI * t * (1 - beta)) + 4 * beta * t * Math.cos(PI * t * (1 + beta))) / (PI * t * (1 - 16 * beta * beta * t * t));
+      }
+      taps[n] = h; e += h * h;
+    }
+    var k = 1 / Math.sqrt(e);
+    for (n = 0; n < N; n++) taps[n] *= k;
+    return (rrcCache[key] = { taps: taps, groupDelay: M });
+  }
+
+  // Band-limited interpolation x(t) at arbitrary t: Kaiser-windowed sinc, 32 taps, 1024-phase table
+  // (nearest phase; phase quantization ≤ 1/2048 sample). Rows normalized to unit DC gain.
+  var SINC_M = 16, PHASES = 1024, sincTab = null;
+  function sincTable() {
+    if (sincTab) return sincTab;
+    var W = 2 * SINC_M, beta = 8, i0b = besselI0(beta);
+    sincTab = new Float64Array((PHASES + 1) * W);
+    for (var p = 0; p <= PHASES; p++) {
+      var f = p / PHASES, s = 0, row = p * W;
+      for (var j = -SINC_M + 1; j <= SINC_M; j++) {
+        var u = f - j, r = u / SINC_M;
+        var v = (u === 0 ? 1 : Math.sin(Math.PI * u) / (Math.PI * u)) * (Math.abs(r) < 1 ? besselI0(beta * Math.sqrt(1 - r * r)) / i0b : 0);
+        sincTab[row + j + SINC_M - 1] = v; s += v;
+      }
+      for (j = 0; j < W; j++) sincTab[row + j] /= s;
+    }
+    return sincTab;
+  }
+  // Fills out[i] = x(times[i]) for a real array (samples outside the array count as 0).
+  function interpAt(x, times, out) {
+    var tab = sincTable(), W = 2 * SINC_M, n = x.length;
+    for (var i = 0; i < times.length; i++) {
+      var t = times[i], i0 = Math.floor(t), row = Math.round((t - i0) * PHASES) * W, acc = 0;
+      var base = i0 - SINC_M + 1;
+      if (base >= 0 && base + W <= n) {
+        for (var j = 0; j < W; j++) acc += x[base + j] * tab[row + j];
+      } else {
+        for (j = 0; j < W; j++) { var idx = base + j; if (idx >= 0 && idx < n) acc += x[idx] * tab[row + j]; }
+      }
+      out[i] = acc;
+    }
+    return out;
+  }
+
+  // y[n] = x(n − d): delay by d samples (any real d). Real or complex. groupDelay = d.
+  function fractionalDelay(x, d) {
+    var n = (x.re || x).length, times = new Float64Array(n);
+    for (var i = 0; i < n; i++) times[i] = i - d;
+    return mapComplex(x, function (v) { return interpAt(v, times, new Float64Array(n)); });
+  }
+
+  // y[n] = x(n·ratio): a receiver whose clock runs at 1/ratio of the transmitter's. ratio = 1 + ppm·1e-6.
+  function resample(x, ratio) {
+    var len = (x.re || x).length, n = Math.floor((len - 1) / ratio) + 1, times = new Float64Array(n);
+    for (var i = 0; i < n; i++) times[i] = i * ratio;
+    return mapComplex(x, function (v) { return interpAt(v, times, new Float64Array(n)); });
+  }
+
   SDR.filters = {
+    rrcTaps: rrcTaps, fractionalDelay: fractionalDelay, resample: resample,
     lowpass: lowpass, fir: fir, firComplex: firComplex, dcBlock: dcBlock, besselI0: besselI0,
     interpolate: interpolate, decimateFiltered: decimateFiltered, firstOrder: firstOrder
   };

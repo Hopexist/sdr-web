@@ -17,7 +17,8 @@
   }
 
   // o: { defaults, run(state, full) → { original, received, demodulated } (each { x, fs }) for playback,
-  //      sync(state), readouts: [[id, label], …], fs = 48000, maxFileSeconds = 10 }
+  //      sync(state), readouts: [[id, label], …], fs = 48000, maxFileSeconds = 10,
+  //      renderAudio(state) (optional longer render for Play), audio: false (no Listen group) }
   function create(o) {
     var FS = o.fs || 48000;
     var panel = document.getElementById('controls');
@@ -89,6 +90,27 @@
 
       setReadouts: function (map) { Object.keys(map).forEach(function (k) { if (readEls[k]) readEls[k].textContent = map[k]; }); },
       setExplain: function (t) { explain.textContent = t; },
+
+      // A card placed in the plot column (in creation order). Returns the card element.
+      addCard: function (content, cls) {
+        var c = addCard(el('div', 'card' + (cls ? ' ' + cls : '')));
+        if (content) c.appendChild(content);
+        return c;
+      },
+
+      // Small multiples: one card holding a CSS grid of plots (cols on wide screens, fewer on narrow ones).
+      addPlotGrid: function (optsList, cols, title) {
+        var c = addCard(el('div', 'card plot'));
+        if (title) c.appendChild(el('h3', 'grid-title', title));
+        var grid = el('div', 'plot-grid');
+        grid.style.setProperty('--cols', cols || 3);
+        c.appendChild(grid);
+        return optsList.map(function (opts) {
+          var cell = el('div', 'plot-cell'), canvas = el('canvas');
+          cell.appendChild(canvas); grid.appendChild(cell);
+          return SDR.plot.createPlot(canvas, opts);
+        });
+      },
 
       addPlot: function (opts) {
         var c = addCard(el('div', 'card plot')), canvas = el('canvas');
@@ -221,7 +243,7 @@
           playBtn('demodulated', 'Play the detector output', 'demodulated'),
           ui.button({ label: '■ Stop', title: 'Stop playback', onClick: function () { SDR.audio.stop(); status.set('Stopped'); } })
         ].forEach(function (b) { playRow.appendChild(b.el); });
-        panel.appendChild(ui.group('Listen', [playRow, volume]));
+        if (o.audio !== false) panel.appendChild(ui.group('Listen', [playRow, volume]));
 
         var linkRow = el('div', 'btn-row');
         linkRow.appendChild(ui.button({ label: 'Reset to defaults', title: 'Restore every control to its default', onClick: function () {
