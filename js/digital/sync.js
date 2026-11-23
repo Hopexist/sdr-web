@@ -19,27 +19,50 @@
   // Gains: opts.gains {k1, k2}, or from opts.loopBw (Hz) and opts.fs with ζ (FM page):
   //   ωn = 2·B_L/(ζ + 1/(4ζ)),  K1 = 2ζ·ωn·T,  K2 = (ωn·T)².
   // Returns { freq (v, rad/sample), phase (θ used for each sample), error, y (corrected z) }.
+  function pllGains(opts) {
+    var zeta = opts.zeta || 0.707;
+    if (opts.gains) return { kp: opts.gains.k1, ki: opts.gains.k2 };
+    var T = 1 / opts.fs, wn = (2 * opts.loopBw) / (zeta + 1 / (4 * zeta));
+    return { kp: 2 * zeta * wn * T, ki: wn * T * wn * T };
+  }
+
+  // Streaming PLL: { step(xr, xi) → { zr, zi, e, v, theta } (one sample), process(block), state }.
+  // step() takes an optional error override (data-aided / joint use by the QPSK receiver).
+  function createPll(opts) {
+    var g = pllGains(opts), kp = g.kp, ki = g.ki, det = opts.detector;
+    var st = { theta: opts.theta0 || 0, integ: opts.fs ? (TWO_PI * (opts.f0 || 0)) / opts.fs : 0 };
+    var r = { zr: 0, zi: 0, e: 0, v: 0, theta: 0 };
+    function rotate(xr, xi) {   // z = x·e^{−jθ} with the current θ (no update)
+      var c = Math.cos(st.theta), s = Math.sin(st.theta);
+      r.zr = xr * c + xi * s; r.zi = xi * c - xr * s; r.theta = st.theta;
+      return r;
+    }
+    function update(e) {
+      st.integ += ki * e;
+      var v = st.integ + kp * e;
+      r.e = e; r.v = v;
+      st.theta += v;
+      if (st.theta > Math.PI) st.theta -= TWO_PI; else if (st.theta < -Math.PI) st.theta += TWO_PI;
+      return r;
+    }
+    function step(xr, xi) { rotate(xr, xi); return update(det ? det(r.zr, r.zi) : Math.atan2(r.zi, r.zr)); }
+    return {
+      kp: kp, ki: ki, state: st, rotate: rotate, update: update, step: step,
+      process: function (x) {
+        var n = x.re.length, out = { freq: new Float64Array(n), phase: new Float64Array(n), error: new Float64Array(n), y: { re: new Float64Array(n), im: new Float64Array(n) } };
+        for (var i = 0; i < n; i++) {
+          step(x.re[i], x.im[i]);
+          out.freq[i] = r.v; out.phase[i] = r.theta; out.error[i] = r.e; out.y.re[i] = r.zr; out.y.im[i] = r.zi;
+        }
+        return out;
+      }
+    };
+  }
+
   function pll(x, opts) {
-    var zeta = opts.zeta || 0.707, kp, ki;
-    if (opts.gains) { kp = opts.gains.k1; ki = opts.gains.k2; } else {
-      var T = 1 / opts.fs, wn = (2 * opts.loopBw) / (zeta + 1 / (4 * zeta));
-      kp = 2 * zeta * wn * T; ki = wn * T * wn * T;
-    }
-    var det = opts.detector;
-    var n = x.re.length, freq = new Float64Array(n), phase = new Float64Array(n), err = new Float64Array(n);
-    var yr = new Float64Array(n), yi = new Float64Array(n);
-    var theta = opts.theta0 || 0, integ = opts.fs ? (TWO_PI * (opts.f0 || 0)) / opts.fs : 0;
-    for (var i = 0; i < n; i++) {
-      var c = Math.cos(theta), s = Math.sin(theta), xr = x.re[i], xi = x.im[i];
-      var zr = xr * c + xi * s, zi = xi * c - xr * s;
-      var e = det ? det(zr, zi) : Math.atan2(zi, zr);
-      integ += ki * e;
-      var v = integ + kp * e;
-      freq[i] = v; phase[i] = theta; err[i] = e; yr[i] = zr; yi[i] = zi;
-      theta += v;
-      if (theta > Math.PI) theta -= TWO_PI; else if (theta < -Math.PI) theta += TWO_PI;
-    }
-    return { freq: freq, phase: phase, error: err, y: { re: yr, im: yi }, kp: kp, ki: ki };
+    var p = createPll(opts), o = p.process(x);
+    o.kp = p.kp; o.ki = p.ki;
+    return o;
   }
 
   // Decision-directed QPSK phase detector: angle(z·conj(d)), d = nearest QPSK point. For small errors at
@@ -66,20 +89,48 @@
   // NCO-style strobe: t_{k+1} = t_k + sps − v_k, v from the PI loop. Loop gains use the measured Kp.
   // o: { sps, t0, bnT, zeta, kp } or { sps, ideal(k) → t_k } (genie timing).
   // Returns { y (strobes), t (strobe times, samples), err, count }.
-  function timingLoop(x, o) {
-    var n = x.re.length, sps = o.sps, half = sps / 2, t = o.ideal ? o.ideal(0) : o.t0;
-    var maxK = Math.max(0, Math.ceil((n - t) / sps) + 4);
-    var yr = new Float64Array(maxK), yi = new Float64Array(maxK), times = new Float64Array(maxK), err = new Float64Array(maxK);
-    var g = o.ideal ? null : loopGains(o.bnT, o.zeta || 0.707, o.kp);
-    var cur = { re: 0, im: 0 }, mid = { re: 0, im: 0 }, pr = 0, pi = 0, I = 0, k = 0;
-    while (k < maxK && t - half - 1 >= 0 && t + 2 < n) {
-      farrow(x, t, cur); farrow(x, t - half, mid);
-      var e = k > 0 ? mid.re * (pr - cur.re) + mid.im * (pi - cur.im) : 0;
-      yr[k] = cur.re; yi[k] = cur.im; times[k] = t; err[k] = e;
-      pr = cur.re; pi = cur.im; k++;
-      if (g) { I += g.k2 * e; t = t + sps - (I + g.k1 * e); } else t = o.ideal(k);
+  // Streaming version: process(block) → { y (strobes), m (midpoints), t, err } for the strobes that became
+  // computable; finish() → the remaining ones (input past the end is treated as missing, like the batch loop).
+  function createTimingLoop(o) {
+    var sps = o.sps, half = sps / 2, g = o.ideal ? null : loopGains(o.bnT, o.zeta || 0.707, o.kp);
+    var br = new Float64Array(0), bi = new Float64Array(0), base = 0;
+    var t = o.ideal ? o.ideal(0) : o.t0, k = 0, I = 0, pr = 0, pi = 0;
+    var cur = { re: 0, im: 0 }, mid = { re: 0, im: 0 }, view = { re: null, im: null };
+    function at(time, out) {   // farrow on the buffer (absolute time)
+      view.re = br; view.im = bi;
+      return farrow(view, time - base, out);
     }
-    return { y: { re: yr.subarray(0, k), im: yi.subarray(0, k) }, t: times.subarray(0, k), err: err.subarray(0, k), count: k };
+    function run(final) {
+      var yr = [], yi = [], mr = [], mi = [], tt = [], ee = [];
+      var avail = base + br.length;
+      while (t - half - 1 >= 0 && t + 2 < avail) {
+        if (t - half - 1 < base) break;   // history already dropped (should not happen)
+        at(t, cur); at(t - half, mid);
+        var e = k > 0 ? mid.re * (pr - cur.re) + mid.im * (pi - cur.im) : 0;
+        yr.push(cur.re); yi.push(cur.im); mr.push(mid.re); mi.push(mid.im); tt.push(t); ee.push(e);
+        pr = cur.re; pi = cur.im; k++;
+        if (g) { I += g.k2 * e; t = t + sps - (I + g.k1 * e); } else t = o.ideal(k);
+      }
+      var keep = Math.floor(t - half) - 2 - base;
+      if (keep > 0 && !final) { br = br.slice(keep); bi = bi.slice(keep); base += keep; }
+      return { y: { re: Float64Array.from(yr), im: Float64Array.from(yi) }, m: { re: Float64Array.from(mr), im: Float64Array.from(mi) },
+        t: Float64Array.from(tt), err: Float64Array.from(ee), count: yr.length };
+    }
+    return {
+      process: function (x) {
+        var nr = new Float64Array(br.length + x.re.length), ni = new Float64Array(nr.length);
+        nr.set(br); nr.set(x.re, br.length); ni.set(bi); ni.set(x.im, bi.length);
+        br = nr; bi = ni;
+        return run(false);
+      },
+      finish: function () { return run(true); }
+    };
+  }
+
+  // Batch: the whole signal at once (same arithmetic as the streaming loop).
+  function timingLoop(x, o) {
+    var r = createTimingLoop(o).process(x);
+    return { y: r.y, m: r.m, t: r.t, err: r.err, count: r.count };
   }
 
   // Gardner detector gain Kp (error per sample of timing error), MEASURED from the S-curve slope at the
@@ -108,11 +159,13 @@
 
   // Coarse CFO by the 4th-power method: x⁴ strips QPSK modulation (every point^4 = −1), leaving a
   // line at 4Δf. Hann window, zero-padded FFT, log-parabolic interpolation between bins.
-  // o: { skip (samples to ignore at the start) }. Returns { f (cycles/sample), peakDb }.
+  // o: { skip (samples to ignore at the start), maxN (acquisition window, default 2^14 samples) }.
+  // Returns { f (cycles/sample), peakDb }.
+  var CFO_WINDOW = 1 << 14;
   function cfoFourthPower(x, o) {
-    var skip = (o && o.skip) || 0, N = Math.min(x.re.length - skip, 1 << 16);
+    var skip = (o && o.skip) || 0, N = Math.min(x.re.length - skip, (o && o.maxN) || CFO_WINDOW);
     if (N < 16) return { f: 0, peakDb: -Infinity };
-    var nfft = Math.min(SDR.mathx.nextPow2(N) * 2, 1 << 17), re = new Float64Array(nfft), im = new Float64Array(nfft);
+    var nfft = SDR.mathx.nextPow2(N) * 2, re = new Float64Array(nfft), im = new Float64Array(nfft);
     for (var i = 0; i < N; i++) {
       var a = x.re[skip + i], b = x.im[skip + i], sr = a * a - b * b, si = 2 * a * b; // z²
       var w = 0.5 - 0.5 * Math.cos((TWO_PI * i) / (N - 1));
@@ -148,6 +201,6 @@
     return { locked: conv < 0.75 * n && vf < o.lockVar, convergence: conv, rms: Math.sqrt(vf) };
   }
 
-  SDR.sync = { pll: pll, loopGains: loopGains, qpskDD: qpskDD, farrow: farrow, timingLoop: timingLoop,
-    gardnerKp: gardnerKp, cfoFourthPower: cfoFourthPower, lockStatus: lockStatus };
+  SDR.sync = { pll: pll, createPll: createPll, loopGains: loopGains, qpskDD: qpskDD, farrow: farrow, timingLoop: timingLoop,
+    createTimingLoop: createTimingLoop, gardnerKp: gardnerKp, cfoFourthPower: cfoFourthPower, CFO_WINDOW: CFO_WINDOW, lockStatus: lockStatus };
 })();

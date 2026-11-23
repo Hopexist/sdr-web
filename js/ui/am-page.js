@@ -5,6 +5,7 @@
   var PREVIEW_S = 0.25, FULL_S = 2, SWEEP_S = 0.5, ILLUSTRATIVE_FC = 6000;
   var DEFAULTS = { src: 'tone', f: 1000, type: 'DSB-LC', mu: 0.8, noise: true, cnr: 20, phase: 0,
     demod: 'envelope', est: 0, bw: 5000, seed: 1 };
+  Object.assign(DEFAULTS, SDR.page.EXTRA_DEFAULTS);
 
   var page = SDR.page.create({
     defaults: DEFAULTS, fs: FS, run: run, sync: sync,
@@ -41,6 +42,7 @@
   page.group('Source', page.sourceControls({ fMin: 100, fMax: 5000, f: DEFAULTS.f }));
   page.group('Modulation', [c.type, c.mu, modeWarn]);
   page.group('Channel', [c.noise, c.cnr, c.phase, page.seedControl()]);
+  page.extraChannelSections();
   page.group('Demodulator', [c.demod, c.est, c.bw]);
 
   function sync(s) {
@@ -68,7 +70,10 @@
     var x = SDR.am.modulate(m, { type: s.type, mu: s.mu });
     var clean = SDR.channel.phaseOffset(x, s.phase * DEG);
     var refPower = s.type === 'DSB-LC' ? 1 : SDR.cx.power(x);
+    var ex = page.extraChannel(s, FS, 16, SDR.cx.power(x));   // fading / phase noise before the noise, ADC after
+    if (ex.pre.length) clean = SDR.channel.apply(clean, ex.pre, rng);
     var rx = s.noise ? SDR.channel.addAwgnCnr(clean, s.cnr, 2 * s.bw, FS, rng, { refPower: refPower }) : clean;
+    if (ex.post.length) rx = SDR.channel.apply(rx, ex.post, rng);
     var pm = meanSq(m), pc = s.type === 'DSB-LC' ? s.mu * s.mu * pm : pm;
     return { m: m, x: x, clean: clean, rx: rx, refPower: refPower, pm: pm, pc: pc,
       idealDb: 10 * Math.log10((2 * pc) / refPower) }; // ideal coherent: SNRout = CNR + idealDb
@@ -157,6 +162,9 @@
   function fmtDb(v) { return isFinite(v) ? v.toFixed(1) + ' dB' : '–'; }
 
   function explain(s, snr, ideal, dphi, cosd) {
+    if (s.fadeOn) return 'Fading: h(t) makes the received carrier wander in amplitude and phase. ' + (s.demod === 'coherent'
+      ? 'A coherent detector with a fixed phase estimate falls apart as the phase rotates.' : 'The envelope detector follows |h|, so the audio level pumps up and down (there is no AGC here).') +
+      ' Measured SNR counts all of that as error. Listen to the demodulated output.';
     if (s.type === 'DSB-SC' && s.demod === 'envelope') return 'Envelope detector on DSB-SC recovers |m(t)|, not m(t), so the output is badly distorted. Switch to coherent detection.';
     if (s.type === 'DSB-LC' && s.mu > 1 && s.demod === 'envelope') return 'Over-modulation (μ > 1): 1 + μ·m(t) goes negative, the envelope folds over, and the detector distorts. A coherent detector still works.';
     if (s.demod === 'coherent' && Math.abs(cosd) < 0.995) {

@@ -5,6 +5,7 @@
   var PREVIEW_S = 0.05, FULL_S = 0.5, AUDIO_S = 3, SWEEP_S = 0.05; // plots use ≤ 0.5 s; audio renders separately on Play
   var DEFAULTS = { src: 'tone', f: 1000, dev: 10000, W: 5000, emph: 'off', ifMode: 'carson', ifBw: 30000,
     noise: true, cnr: 20, foff: 0, phase: 0, demod: 'disc', loopBw: 30000, bessel: true, betas: '1, 2, 5', seed: 1 };
+  Object.assign(DEFAULTS, SDR.page.EXTRA_DEFAULTS);
 
   var page = SDR.page.create({
     defaults: DEFAULTS, fs: FSA, run: run, sync: sync, renderAudio: renderAudio, maxFileSeconds: 5,
@@ -65,11 +66,20 @@
     ['β = 1', 'Δf = W (keeps W)', preset(function (W) { return W; })],
     ['β = 5', 'Δf = 5·W (keeps W)', preset(function (W) { return Math.min(100000, 5 * W); })]
   ].forEach(function (p) { presets.appendChild(ui.button({ label: p[0], title: p[1], onClick: p[2] }).el); });
+  // Mobile flutter: broadcast FM through Rayleigh fading at fd ≈ 50 Hz (a car at ~55 km/h on 100 MHz). Listen to it.
+  presets.appendChild(ui.button({ label: 'FM mobile flutter', title: 'Broadcast FM, Rayleigh fading with 50 Hz Doppler, CNR 25 dB: press ▶ Play demodulated', onClick: function () {
+    c.W.set(15000, true); c.dev.set(75000, true); c.loopBw.set(suggestLoop(75000, page.state()), true); c.cnr.set(25, true); c.noise.set(true, true);
+    page.controls.forEach(function (k) {
+      if (k.key === 'fadeOn') k.set(true, true); if (k.key === 'fadeModel') k.set('rayleigh', true); if (k.key === 'fadeHz') k.set(50, true);
+    });
+    commit();
+  } }).el);
 
   page.group('Source', page.sourceControls({ fMin: 100, fMax: 15000, f: DEFAULTS.f }));
   page.group('Modulation', [presets, c.dev, c.W, c.emph, c.bessel]);
   page.group('Receiver filter', [c.ifMode, c.ifBw]);
   page.group('Channel', [c.noise, c.cnr, c.foff, c.phase, page.seedControl()]);
+  page.extraChannelSections();
   page.group('Demodulator', [c.demod, c.loopBw]);
 
   function bwOf(s) { return s.ifMode === 'carson' ? SDR.fm.carson(s.dev, s.W) : s.ifBw; }
@@ -102,7 +112,10 @@
     var bt = bwOf(s), tau = tauOf(s);
     var tx = SDR.fm.transmit(mA, { fsA: FSA, fsR: FSR, deviation: s.dev, tau: tau });
     var ch = SDR.channel.freqOffset(SDR.channel.phaseOffset(tx.x, s.phase * DEG), s.foff, FSR);
+    var ex = page.extraChannel(s, FSR, 64, 1);   // fading / phase noise before the noise, ADC after
+    if (ex.pre.length) ch = SDR.channel.apply(ch, ex.pre, rng);
     var rx = s.noise ? SDR.channel.addAwgnCnr(ch, s.cnr, bt, FSR, rng, { refPower: 1 }) : ch;
+    if (ex.post.length) rx = SDR.channel.apply(rx, ex.post, rng);
     return { mA: mA, tx: tx, ch: ch, rx: rx, bt: bt, tau: tau };
   }
 
@@ -214,6 +227,8 @@
     var clipped = Math.abs(s.foff) + SDR.fm.carson(s.dev, s.W) / 2 > sim.bt / 2 + 1000;
     if (clipped) return 'The signal no longer fits the IF filter (offset or narrow IF bandwidth): its outer sidebands are cut, which distorts the output.' + extra;
     if (!s.noise) return 'Noise off: the output is limited only by filtering and distortion.' + extra;
+    if (s.fadeOn && cps >= 1) return 'Mobile fading: the average CNR is ' + s.cnr + ' dB, but every deep fade drops it through the FM threshold, so clicks arrive in bursts (' +
+      Math.round(cps) + '/s) and the output flutters. Press ▶ Play demodulated to hear it.' + extra;
     var deficit = theory - snr, state;
     if (!sim.tau) state = deficit < 1.5 ? 'above' : deficit < 5 ? 'near' : 'below';
     else state = cps < 2 ? 'above' : cps < 0.02 * s.W ? 'near' : 'below'; // theory excludes emphasis gain, so judge by clicks

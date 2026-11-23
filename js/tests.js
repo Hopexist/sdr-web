@@ -532,6 +532,112 @@
     check('wilsonInterval(10, 100) ≈ [0.0552, 0.1744]', Math.abs(w[0] - 0.0552) < 1e-3 && Math.abs(w[1] - 0.1744) < 1e-3, w.map(function (v) { return v.toFixed(4); }).join(', '));
   });
 
+  // ---------------- Phase 4: streaming link, channel model, equalizers ----------------
+  group('Streaming link', function () {
+    var cfgs = [['default, 10 dB', { ebn0Db: 10, span: 10 }],
+      ['everything on, 8 dB', { ebn0Db: 8, span: 10, channel: { phaseDeg: 30, cfoRs: 0.03, timingSym: 0.6, driftPpm: 100 } }]];
+    cfgs.forEach(function (c) {
+      var b = SDR.qpsk.runLinkBatch(c[1], SDR.rng.createRng(11));
+      [64, 257, 4096].forEach(function (bs) {
+        var s = SDR.qpsk.runLink(Object.assign({}, c[1], { blockSymbols: bs }), SDR.rng.createRng(11)), diff = 0;
+        for (var i = 0; i < b.bitsRx.length; i++) if (b.bitsRx[i] !== s.bitsRx[i]) diff++;
+        check('streaming = batch bit-exact (' + c[0] + ', block ' + bs + ' symbols)', diff === 0 && s.errors === b.errors && s.frameStart === b.frameStart,
+          diff + ' bits differ; errors ' + s.errors + ' vs ' + b.errors);
+      });
+    });
+    var h = SDR.filters.rrcTaps(0.2, 8, SDR.filters.rrcAutoSpan(0.2)), p = SDR.dsp.convolve(h.taps, h.taps, 'full'), c0 = 2 * h.groupDelay, isi = 0;
+    for (var k = 1; c0 + k * 8 < p.length; k++) isi += p[c0 + k * 8] * p[c0 + k * 8] + p[c0 - k * 8] * p[c0 - k * 8];
+    var isiDb = 10 * Math.log10(isi / (p[c0] * p[c0]));
+    check('RRC automatic span (β 0.2 → ' + SDR.filters.rrcAutoSpan(0.2) + ' symbols): ISI < −45 dB', isiDb < -45, 'ISI ' + isiDb.toFixed(1) + ' dB');
+  });
+
+  group('Channel identity', function () {
+    var rng = SDR.rng.createRng(3), x = rng.randnComplex(2000, 1);
+    var off = [{ type: 'timing', sym: 0, sps: 4 }, { type: 'drift', ppm: 0 }, { type: 'cfo', fRs: 0, sps: 4 }, { type: 'phasenoise', linewidthTs: 0, sps: 4 },
+      { type: 'phase', deg: 0 }, { type: 'iq', epsDb: 0, phiDeg: 0 }, { type: 'dc', rel: 0 }, { type: 'awgn', enabled: false }];
+    var y = SDR.channel.apply(x, off, rng), same = y.re.length === x.re.length;
+    for (var i = 0; same && i < x.re.length; i++) if (y.re[i] !== x.re[i] || y.im[i] !== x.im[i]) same = false;
+    check('every impairment off → channel is exactly the identity', same);
+  });
+
+  group('Fading', function () {
+    var f = SDR.channel.createFading({ model: 'rayleigh', mode: 'block', blockSymbols: 1, sps: 1 }, SDR.rng.createRng(1)), n = 200000, pw = 0, R = [0.3, 0.7, 1.2], cnt = [0, 0, 0], i;
+    for (i = 0; i < n; i++) { var hh = f.hAt(i), a = Math.hypot(hh.re, hh.im); pw += a * a; R.forEach(function (r, j) { if (a < r) cnt[j]++; }); }
+    approx('Rayleigh: E|h|² = 1 (±1%)', pw / n, 1, 0.01);
+    R.forEach(function (r, j) { approx('Rayleigh CDF P(|h| < ' + r + ') = 1 − e^{−r²}', cnt[j] / n, 1 - Math.exp(-r * r), 0.005); });
+    var fd = 0.01, lags = [10, 25, 50], acc = [0, 0, 0], P = 0, real = 60, len = 3000;
+    for (var s = 0; s < real; s++) {
+      var g = SDR.channel.createFading({ mode: 'jakes', fdTs: fd, sps: 1 }, SDR.rng.createRng(100 + s)), hr = new Float64Array(len), hi = new Float64Array(len);
+      for (i = 0; i < len; i++) { var v = g.hAt(i); hr[i] = v.re; hi[i] = v.im; }
+      for (i = 0; i < len - 60; i++) { P += hr[i] * hr[i] + hi[i] * hi[i]; lags.forEach(function (L, j) { acc[j] += hr[i + L] * hr[i] + hi[i + L] * hi[i]; }); }
+    }
+    approx('Jakes: E|h|² = 1 (±2%)', P / (real * (len - 60)), 1, 0.02);
+    lags.forEach(function (L, j) { approx('Jakes autocorrelation at lag ' + L + ' ≈ J0(2π·fd·τ) (fd·Ts = 0.01)', acc[j] / P, SDR.mathx.besselJ(0, 2 * Math.PI * fd * L), 0.05); });
+    [10, 20].forEach(function (kDb) {
+      var g = SDR.channel.createFading({ model: 'rician', mode: 'block', blockSymbols: 1, sps: 1, kDb: kDb }, SDR.rng.createRng(5)), mr = 0, mi = 0, p2 = 0, N = 100000;
+      for (i = 0; i < N; i++) { var v = g.hAt(i); mr += v.re; mi += v.im; p2 += v.re * v.re + v.im * v.im; }
+      mr /= N; mi /= N;
+      approx('Rician: measured K = ' + kDb + ' dB (±0.5 dB)', 10 * Math.log10((mr * mr + mi * mi) / (p2 / N - mr * mr - mi * mi)), kDb, 0.5);
+    });
+    approx('qpskRician(K → −∞) = qpskRayleigh (10 dB)', SDR.theory.qpskRician(10, -Infinity) / SDR.theory.qpskRayleigh(10), 1, 1e-6);
+    approx('Rician K = 20 dB is within 0.5 dB of AWGN (at 10 dB)', SDR.theory.qpskEbn0ForBer(SDR.theory.qpskRician(10, 20)), 10, 0.5);
+  });
+
+  group('BER under fading', function () {
+    [0, 10, 20].forEach(function (eb) {
+      var r = runUntil({ ebn0Db: eb, sps: 4, nBits: 20000, rx: IDEAL, channel: { fading: { model: 'rayleigh', mode: 'block', blockSymbols: 1 } } }, 300, 4e6, eb + 1);
+      var th = SDR.theory.qpskRayleigh(eb);
+      check('Rayleigh block fading + ideal CSI, ' + eb + ' dB: inside Wilson CI of qpskRayleigh', inCi(th, r), ciText(r, th));
+    });
+    var rk = runUntil({ ebn0Db: 10, sps: 4, nBits: 20000, rx: IDEAL, channel: { fading: { model: 'rician', mode: 'block', blockSymbols: 1, kDb: 10 } } }, 300, 4e6, 3);
+    var thk = SDR.theory.qpskRician(10, 10);
+    check('Rician K = 10 dB, 10 dB: inside Wilson CI of qpskRician', inCi(thk, rk), ciText(rk, thk));
+    var jk = { model: 'rayleigh', mode: 'jakes', fdTs: 1e-3 };
+    var a = runUntil({ ebn0Db: 20, sps: 4, nBits: 40000, rx: IDEAL, channel: { fading: jk } }, 200, 2e6, 1);
+    var b = runUntil({ ebn0Db: 20, sps: 4, nBits: 40000, pilotEvery: 8, rx: Object.assign({}, IDEAL, { carrier: 'pilot' }), channel: { fading: jk } }, 200, 2e6, 1);
+    var loss = SDR.theory.rayleighEbn0ForBer(a.ber) - SDR.theory.rayleighEbn0ForBer(b.ber);
+    check('pilot-aided (every 8) at fd·Ts = 1e-3, 20 dB: within 2 dB of ideal CSI', loss < 2,
+      'ideal ' + a.ber.toExponential(2) + ', pilot ' + b.ber.toExponential(2) + ' → ' + loss.toFixed(2) + ' dB');
+  });
+
+  group('Equalizers', function () {
+    var mild = SDR.channel.multipathPresets('mild');
+    var lms = SDR.qpsk.runLink({ ebn0Db: 12, sps: 4, nBits: 20000, channel: { multipath: { taps: mild } }, rx: { eq: 'lms', eqTaps: 11, eqMain: 3, eqMu: 0.02 } }, SDR.rng.createRng(2));
+    var ref = SDR.qpsk.runLink({ ebn0Db: 12, sps: 4, nBits: 20000 }, SDR.rng.createRng(2));
+    check('LMS on "3-tap mild" converges within 300 symbols', lms.eq.convergence < 300, lms.eq.convergence + ' symbols, MSE ' + lms.eq.mseDb.toFixed(1) + ' dB');
+    // At 12 dB both BERs are ~1e-8 (unmeasurable), so compare the Es/N0 each link delivers (from EVM).
+    check('LMS at 12 dB: within 1 dB of the no-multipath link (Es/N0 from EVM)', ref.esn0EstDb - lms.esn0EstDb < 1 && lms.errors === 0,
+      'no multipath ' + ref.esn0EstDb.toFixed(2) + ' dB, LMS ' + lms.esn0EstDb.toFixed(2) + ' dB, errors ' + lms.errors);
+    var q = SDR.qpsk.runLink({ noise: false, sps: 4, nBits: 8000, channel: { multipath: { taps: mild } }, rx: { eq: 'lms', eqTaps: 11, eqMain: 3, eqMu: 0.05 } }, SDR.rng.createRng(2));
+    var f = []; for (var i = 0; i < 64; i++) f.push(-0.5 + i / 64);
+    var resp = SDR.eq.responseDb(q.eq.combined, f), mean = resp.reduce(function (s, v) { return s + v; }, 0) / resp.length, dev = 0;
+    resp.forEach(function (v) { dev = Math.max(dev, Math.abs(v - mean)); });
+    check('channel·equalizer response flat within ±1 dB once converged (LMS, noiseless)', dev < 1, '±' + dev.toFixed(2) + ' dB');
+    var cma = SDR.qpsk.runLink({ ebn0Db: 15, sps: 4, nBits: 8000, channel: { multipath: { taps: mild }, phaseDeg: 50 }, rx: { eq: 'cma', eqTaps: 11, eqMain: 3, eqMu: 0.01 } }, SDR.rng.createRng(2));
+    check('CMA (blind) converges on the same channel; PLL + preamble fix the rotation', cma.errors === 0 && cma.lock.carrier.locked, cma.errors + ' errors, convergence ' + cma.eq.convergence + ' symbols');
+    var zf = SDR.qpsk.runLink({ noise: false, sps: 4, nBits: 4000, channel: { multipath: { taps: SDR.channel.multipathPresets('2ray') } }, rx: { eq: 'zf', eqTaps: 15, eqMain: 6 } }, SDR.rng.createRng(2));
+    check('ideal ZF equalizer on 2-ray: 0 errors noiseless', zf.errors === 0, zf.errors + ' errors');
+  });
+
+  group('IQ, ADC, phase noise, DC', function () {
+    var iq = SDR.qpsk.runLink({ ebn0Db: 20, nBits: 20000, channel: { iq: { epsDb: 1, phiDeg: 5 } }, rx: { iqCorrect: true } }, SDR.rng.createRng(4));
+    check('IQ correction (ε = 1 dB, φ = 5°): IRR > 40 dB after', iq.channel.iq.irrAfterDb > 40, 'before ' + iq.channel.iq.irrBeforeDb.toFixed(1) + ' dB, after ' + iq.channel.iq.irrAfterDb.toFixed(1) + ' dB');
+    [4, 8, 12].forEach(function (N) {
+      var r = SDR.qpsk.runLink({ noise: false, nBits: 20000, channel: { adc: { bits: N, backoffDb: 12 } } }, SDR.rng.createRng(5));
+      approx('ADC ' + N + ' bits, 12 dB backoff: SQNR ≈ 6.02N + 1.76 − backoff (±1 dB), no clipping', r.channel.adc.sqnrDb, SDR.theory.adcSqnr(N, 12), 1);
+      check('ADC ' + N + ' bits: clip rate 0 at 12 dB backoff', r.channel.adc.clipRate === 0);
+    });
+    var lw = 1e-3, pn = SDR.qpsk.runLink({ noise: false, nBits: 40000, sps: 4, channel: { phaseNoise: lw } }, SDR.rng.createRng(6)), th = pn.traces.phaseNoise, s = 0, s2 = 0, m = 0;
+    for (var i = 4; i < th.length; i += 4) { var d = th[i] - th[i - 4]; s += d; s2 += d * d; m++; }
+    approx('phase noise: per-symbol increment variance = 2π·Δν·Ts (±5%)', (s2 / m - (s / m) * (s / m)) / (2 * Math.PI * lw), 1, 0.05);
+    var dcb = SDR.filters.createDcBlocker(0.999), n = 60000, x = { re: new Float64Array(n), im: new Float64Array(n) }, rng = SDR.rng.createRng(7);
+    for (i = 0; i < n; i++) { x.re[i] = 0.5 + 0.1 * rng.randn(); x.im[i] = -0.3 + 0.1 * rng.randn(); }
+    var y = dcb.process(x), mr = 0, mi = 0;
+    for (i = n / 2; i < n; i++) { mr += y.re[i]; mi += y.im[i]; }
+    var res = 20 * Math.log10(Math.hypot(mr / (n / 2), mi / (n / 2)) / Math.hypot(0.5, 0.3));
+    check('DC blocker (pole 0.999) removes the offset to < −40 dB after settling', res < -40, res.toFixed(1) + ' dB');
+  });
+
   // ---------------- render results ----------------
   Promise.all(pending).then(render);
   function render() {

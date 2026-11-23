@@ -38,6 +38,33 @@
       <p><strong>Loop bandwidth.</strong> BnT sets how fast each loop reacts. Wide loops lock quickly and follow drift, but
         pass more noise (jittery estimates, even cycle slips). Narrow loops are quiet but slow, and may never catch up with a
         frequency offset or clock drift. Try the "Loop too wide" and "Loop too narrow" presets.</p>
+      <p><strong>Fading.</strong> When the signal arrives over many scattered paths, they add with random phases and the
+        received gain h(t) is complex Gaussian: its magnitude is Rayleigh distributed (Rician when a line-of-sight path
+        dominates, with K = LOS power / scatter power). In AWGN, BER falls exponentially with SNR. Under Rayleigh fading
+        it falls only as 1/(4·SNR), because the errors come from the occasional deep fades, not from the average SNR.
+        The "time below −10 dB" readout tracks those fades.</p>
+      <p><strong>Doppler and coherence time.</strong> Motion makes h(t) change at a rate set by the Doppler shift fd. The
+        channel stays roughly constant for a coherence time of about 0.4/fd. Pilots spaced well inside that time let the
+        receiver interpolate h between them (pilot-aided). A preamble-only estimate is fine for block fading but goes stale
+        as soon as the channel moves. Pilots cost throughput, which is why the overhead is shown.</p>
+      <p><strong>Multipath and equalization.</strong> Echoes arriving a symbol or more late smear symbols into each other
+        (ISI), which shows as notches in the channel's frequency response. An equalizer is a filter that undoes it.
+        Zero-forcing inverts the channel exactly, which at a deep spectral null means huge gain, so it boosts the noise
+        there (try "3-tap severe" with ZF). LMS adapts towards the minimum-MSE solution: it trains on the known preamble,
+        then follows its own decisions, and accepts a little ISI to avoid amplifying noise. CMA needs no training at all.
+        It only pushes |z| towards 1, so it leaves a phase rotation for the PLL to fix. The equalizer sits after timing
+        recovery (it needs symbol-spaced samples) and before the carrier PLL (a decision-directed PLL can't lock on ISI).
+        Once converged, channel × equalizer should be flat.</p>
+      <p><strong>Phase noise vs loop bandwidth.</strong> A real oscillator's phase random-walks. The carrier PLL must be
+        wide enough to follow it, or the phase drifts by 90° and a cycle slip corrupts everything after it. But every bit
+        of extra bandwidth lets more thermal noise into the phase estimate. The best BnT balances the two.</p>
+      <p><strong>IQ imbalance</strong> is a gain or phase mismatch between the I and Q mixers. It adds a mirror image of the
+        signal: y = μ·x + ν·x*. The image rejection ratio |μ|²/|ν|² says how strong it is, and it appears as a squashed,
+        skewed constellation. Because a proper QPSK signal has equal, uncorrelated I and Q power, the receiver can measure
+        the imbalance blindly and re-orthonormalize the axes (Gram–Schmidt).</p>
+      <p><strong>ADC bits.</strong> Every bit of resolution adds about 6 dB: SQNR ≈ 6.02·N + 1.76 dB for a full-scale sine,
+        minus the backoff the AGC leaves for peaks. Too little backoff and the peaks clip (watch the histogram pile up at
+        ±FS); too much and the signal uses only a few quantizer levels.</p>
     </details>
   </section>
 </div>
@@ -54,6 +81,7 @@
 <script src="js/digital/mapping.js"></script>
 <script src="js/digital/sequences.js"></script>
 <script src="js/digital/sync.js"></script>
+<script src="js/digital/equalizer.js"></script>
 <script src="js/digital/qpsk.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/ui/controls.js"></script>

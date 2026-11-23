@@ -261,6 +261,29 @@
     return { el: wrap, input: inp, setDisabled: function (d) { inp.disabled = d; } };
   }
 
+  // section(title, toggle, [controls]) → collapsible section: a disclosure button (aria-expanded) and an
+  // on/off switch side by side in the header (not nested, so both stay separately operable).
+  // The body is greyed out while the switch is off, and expands when it is switched on (until folded by hand).
+  function section(title, tog, children) {
+    var d = el('div', 'ctl-section'), head = el('div', 'ctl-section-head'), id = nextId('sec');
+    var btn = el('button', 'ctl-section-title', title);
+    btn.type = 'button'; btn.setAttribute('aria-expanded', 'false'); btn.setAttribute('aria-controls', id);
+    head.appendChild(btn);
+    if (tog) { tog.el.classList.add('ctl-section-switch'); tog.input.setAttribute('aria-label', title + ' on/off'); head.appendChild(tog.el); }
+    d.appendChild(head);
+    var body = el('div', 'ctl-section-body');
+    body.id = id; body.hidden = true;
+    (children || []).forEach(function (c) { if (c) body.appendChild(c.el || c); });
+    d.appendChild(body);
+    var touched = false;
+    function setOpen(o) { body.hidden = !o; btn.setAttribute('aria-expanded', String(o)); d.classList.toggle('open', o); }
+    btn.addEventListener('click', function () { touched = true; setOpen(body.hidden); });
+    function sync() { var on = !tog || tog.get(); body.classList.toggle('off', !on); if (on && tog && !touched) setOpen(true); }
+    if (tog) tog.input.addEventListener('change', sync);
+    sync();
+    return { el: d, sync: sync };
+  }
+
   // group(legend, [controls or elements]) → <fieldset>
   function group(legend, children) {
     var fs = el('fieldset', 'ctl-group');
@@ -344,7 +367,7 @@
 
   SDR.ui = {
     debounce: debounce, throttle: throttle, live: live, runChunked: runChunked, text: text,
-    slider: slider, number: number, select: select, toggle: toggle, button: button, fileInput: fileInput, group: group,
+    slider: slider, number: number, select: select, toggle: toggle, button: button, fileInput: fileInput, group: group, section: section,
     encodeHash: encodeHash, decodeHash: decodeHash, readHash: readHash, writeHash: writeHash,
     stateOf: stateOf, applyState: applyState, copyText: copyText, statusBar: statusBar
   };

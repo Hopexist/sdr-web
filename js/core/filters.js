@@ -238,7 +238,122 @@
     return mapComplex(x, function (v) { return interpAt(v, times, new Float64Array(n)); });
   }
 
+  // Automatic RRC span (symbols): truncation ISI ≤ −45 dB. Measured: β 0.2/span 20 −58 dB, β 0.3/span 16
+  // −46 dB, β 0.5/span 12 −65 dB (ISI is not monotonic in span: it depends on where the sidelobes are cut).
+  function rrcAutoSpan(beta) { return beta < 0.3 ? 20 : beta < 0.5 ? 16 : 12; }
+
+  // ===================== Streaming (stateful) blocks: { process(block) → block, reset() } =====================
+  // Complex blocks { re, im }. History carries over between blocks, so any block partition gives the
+  // same output as one big block (up to floating-point summation order).
+
+  // Direct-form complex FIR with real taps. Output length = input length; delay (N−1)/2 for symmetric taps.
+  function createFir(taps) {
+    var N = taps.length, H = N - 1, hr = new Float64Array(H), hi = new Float64Array(H);
+    return {
+      delay: H / 2,
+      process: function (x) {
+        var L = x.re.length, br = new Float64Array(H + L), bi = new Float64Array(H + L), yr = new Float64Array(L), yi = new Float64Array(L);
+        br.set(hr); br.set(x.re, H); bi.set(hi); bi.set(x.im, H);
+        for (var n = 0; n < L; n++) {
+          var ar = 0, ai = 0, base = n + H;
+          for (var k = 0; k < N; k++) { var t = taps[k]; ar += t * br[base - k]; ai += t * bi[base - k]; }
+          yr[n] = ar; yi[n] = ai;
+        }
+        hr = br.slice(L); hi = bi.slice(L);
+        return { re: yr, im: yi };
+      },
+      reset: function () { hr.fill(0); hi.fill(0); }
+    };
+  }
+
+  // Polyphase upsample-by-L + FIR (pulse shaping): symbols in, L·symbols samples out. Only the taps that
+  // land on non-zero (symbol) inputs are summed: y[sL + p] = Σ_j taps[p + jL]·sym[s − j].
+  function createUpFir(taps, L) {
+    var N = taps.length, H = Math.ceil(N / L), hr = new Float64Array(H), hi = new Float64Array(H);
+    return {
+      process: function (s) {
+        var S = s.re.length, br = new Float64Array(H + S), bi = new Float64Array(H + S), yr = new Float64Array(S * L), yi = new Float64Array(S * L);
+        br.set(hr); br.set(s.re, H); bi.set(hi); bi.set(s.im, H);
+        for (var k = 0; k < S; k++) {
+          for (var p = 0; p < L; p++) {
+            var ar = 0, ai = 0;
+            for (var j = 0, i = p; i < N; j++, i += L) { ar += taps[i] * br[H + k - j]; ai += taps[i] * bi[H + k - j]; }
+            yr[k * L + p] = ar; yi[k * L + p] = ai;
+          }
+        }
+        hr = br.slice(S); hi = bi.slice(S);
+        return { re: yr, im: yi };
+      },
+      reset: function () { hr.fill(0); hi.fill(0); }
+    };
+  }
+
+  // One interpolated sample x(t) from a buffer holding input indices [base, base + len); samples outside
+  // the signal (index < 0 or ≥ total, if total is known) count as zero. Same kernel as fractionalDelay.
+  function interpBuf(br, bi, base, len, t, total, out) {
+    var tab = sincTable(), W = 2 * SINC_M, i0 = Math.floor(t), row = Math.round((t - i0) * PHASES) * W, ar = 0, ai = 0;
+    var first = i0 - SINC_M + 1;
+    for (var j = 0; j < W; j++) {
+      var idx = first + j;
+      if (idx < 0 || (total >= 0 && idx >= total)) continue;
+      var b = idx - base;
+      if (b < 0 || b >= len) continue;
+      ar += br[b] * tab[row + j]; ai += bi[b] * tab[row + j];
+    }
+    out.re = ar; out.im = ai;
+    return out;
+  }
+
+  // Streaming resampler y[n] = x(n·ratio − delay): timing offset (delay, samples) and clock drift (ratio).
+  // Emits each output once its interpolation window is available; flush() emits the rest (zeros past the
+  // end), for floor((len − 1)/ratio) + 1 outputs in total (len outputs when ratio = 1), like the batch versions.
+  function createResampler(o) {
+    var ratio = o.ratio || 1, d = o.delay || 0, br = new Float64Array(0), bi = new Float64Array(0), base = 0, total = 0, nOut = 0;
+    var tmp = { re: 0, im: 0 };
+    function emit(limit, final) {
+      var or = [], oi = [];
+      for (;;) {
+        if (final && nOut >= limit) break;
+        var t = nOut * ratio - d;
+        if (!final && Math.floor(t) + SINC_M >= base + br.length) break;
+        interpBuf(br, bi, base, br.length, t, final ? total : -1, tmp);
+        or.push(tmp.re); oi.push(tmp.im); nOut++;
+      }
+      var keepFrom = Math.max(base, Math.floor(nOut * ratio - d) - SINC_M - 1), drop = keepFrom - base;
+      if (drop > 0) { br = br.slice(drop); bi = bi.slice(drop); base = keepFrom; }
+      return { re: Float64Array.from(or), im: Float64Array.from(oi) };
+    }
+    return {
+      process: function (x) {
+        var nr = new Float64Array(br.length + x.re.length), ni = new Float64Array(bi.length + x.im.length);
+        nr.set(br); nr.set(x.re, br.length); ni.set(bi); ni.set(x.im, bi.length);
+        br = nr; bi = ni; total += x.re.length;
+        return emit(0, false);
+      },
+      flush: function () { return emit(ratio === 1 ? total : Math.floor((total - 1) / ratio) + 1, true); },
+      reset: function () { br = new Float64Array(0); bi = new Float64Array(0); base = 0; total = 0; nOut = 0; }
+    };
+  }
+
+  // Streaming DC blocker y[n] = x[n] − x[n−1] + a·y[n−1] (pole a close to 1: notch width ≈ (1 − a)·fs/2π).
+  function createDcBlocker(a) {
+    var xr = 0, xi = 0, yr = 0, yi = 0;
+    return {
+      process: function (x) {
+        var L = x.re.length, or = new Float64Array(L), oi = new Float64Array(L);
+        for (var n = 0; n < L; n++) {
+          yr = x.re[n] - xr + a * yr; yi = x.im[n] - xi + a * yi;
+          xr = x.re[n]; xi = x.im[n]; or[n] = yr; oi[n] = yi;
+        }
+        return { re: or, im: oi };
+      },
+      reset: function () { xr = xi = yr = yi = 0; }
+    };
+  }
+
   SDR.filters = {
+    rrcAutoSpan: rrcAutoSpan, createFir: createFir, createUpFir: createUpFir, createResampler: createResampler,
+    createDcBlocker: createDcBlocker, interpBuf: interpBuf, SINC_M: SINC_M,
     rrcTaps: rrcTaps, fractionalDelay: fractionalDelay, resample: resample,
     lowpass: lowpass, fir: fir, firComplex: firComplex, dcBlock: dcBlock, besselI0: besselI0,
     interpolate: interpolate, decimateFiltered: decimateFiltered, firstOrder: firstOrder

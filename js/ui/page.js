@@ -26,7 +26,7 @@
     var explainer = plots.querySelector('details');
     var status = ui.statusBar(panel);
     var controls = [];
-    var fileMsg = null, fileMissing = false, last = null, src = null;
+    var fileMsg = null, fileMissing = false, last = null, src = null, sections = [];
 
     // Readouts card + interaction hint at the top of the plot column.
     var card = el('div', 'card readouts');
@@ -86,6 +86,44 @@
         var g = ui.group(legend, items);
         panel.appendChild(g);
         return g;
+      },
+
+      // Collapsible section with an on/off switch; keyed controls join the URL state.
+      section: function (title, tog, items) {
+        if (tog) page.register(tog);
+        items.forEach(page.register);
+        var sec = ui.section(title, tog, items);
+        panel.appendChild(sec.el);
+        sections.push(sec);
+        return sec;
+      },
+
+      // Shared extra channel for the analog pages: fading (Rayleigh/Rician with Doppler), phase noise, ADC.
+      // Keys (add EXTRA_DEFAULTS to the page defaults): fadeOn fadeModel fadeHz fadeK pnOn pnHz adcOn adcBits adcBackoff.
+      extraChannelSections: function () {
+        var X = EXTRA_DEFAULTS, L = page.live;
+        function sl(o) { o.onInput = L.input; o.onChange = L.commit; return ui.slider(o); }
+        page.section('Fading', ui.toggle({ key: 'fadeOn', label: 'on', checked: X.fadeOn, onChange: commit, title: 'Multiply the received signal by a time-varying Rayleigh or Rician gain (Jakes model)' }), [
+          ui.select({ key: 'fadeModel', label: 'Model', value: X.fadeModel, onChange: commit, title: 'Rayleigh: no line of sight. Rician: a steady line-of-sight part plus scatter.',
+            options: [{ value: 'rayleigh', label: 'Rayleigh' }, { value: 'rician', label: 'Rician' }] }),
+          sl({ key: 'fadeHz', label: 'Doppler fd', min: 0.1, max: 500, log: true, unit: 'Hz', value: X.fadeHz, title: 'Maximum Doppler shift: how fast the fading changes (coherence time ≈ 0.4/fd)' }),
+          sl({ key: 'fadeK', label: 'Rician K', min: 0, max: 20, step: 0.5, unit: 'dB', value: X.fadeK, title: 'Line-of-sight power over scattered power' })
+        ]);
+        page.section('Phase noise', ui.toggle({ key: 'pnOn', label: 'on', checked: X.pnOn, onChange: commit, title: 'Local-oscillator phase noise (Wiener process)' }), [
+          sl({ key: 'pnHz', label: 'Linewidth Δν', min: 0.1, max: 1000, log: true, unit: 'Hz', value: X.pnHz, title: '3-dB linewidth of the oscillator' })
+        ]);
+        page.section('ADC', ui.toggle({ key: 'adcOn', label: 'on', checked: X.adcOn, onChange: commit, title: 'AGC, clipping and N-bit quantization of I and Q' }), [
+          sl({ key: 'adcBits', label: 'Bits', min: 2, max: 16, step: 1, value: X.adcBits, title: 'Quantizer resolution: SQNR ≈ 6.02·N + 1.76 − backoff dB' }),
+          sl({ key: 'adcBackoff', label: 'Backoff', min: 0, max: 30, step: 0.5, unit: 'dB', value: X.adcBackoff, title: 'How far the AGC keeps the signal below full scale (too little clips)' })
+        ]);
+      },
+      // Channel lists for those extras. gridSps = samples per fading grid point (keeps Jakes cheap at high fs).
+      extraChannel: function (s, fs, gridSps, nominalPower) {
+        var pre = [], post = [], g = gridSps || 16;
+        if (s.fadeOn) pre.push({ type: 'fading', model: s.fadeModel, mode: 'jakes', fdTs: (s.fadeHz * g) / fs, kDb: s.fadeK, sps: g });
+        if (s.pnOn) pre.push({ type: 'phasenoise', linewidthTs: s.pnHz / fs, sps: 1 });
+        if (s.adcOn) post.push({ type: 'adc', bits: s.adcBits, backoffDb: s.adcBackoff, nominalPower: nominalPower || 1 });
+        return { pre: pre, post: post };
       },
 
       setReadouts: function (map) { Object.keys(map).forEach(function (k) { if (readEls[k]) readEls[k].textContent = map[k]; }); },
@@ -247,7 +285,7 @@
 
         var linkRow = el('div', 'btn-row');
         linkRow.appendChild(ui.button({ label: 'Reset to defaults', title: 'Restore every control to its default', onClick: function () {
-          ui.applyState(controls, o.defaults); commit();
+          ui.applyState(controls, o.defaults); sections.forEach(function (x) { x.sync(); }); commit();
         } }).el);
         linkRow.appendChild(ui.button({ label: 'Copy link', title: 'Copy a link that restores this exact setup', onClick: function () {
           ui.writeHash(state());
@@ -256,7 +294,7 @@
         } }).el);
         panel.appendChild(linkRow);
 
-        function loadFromHash() { ui.applyState(controls, ui.readHash(o.defaults)); run(true); }
+        function loadFromHash() { ui.applyState(controls, ui.readHash(o.defaults)); sections.forEach(function (x) { x.sync(); }); run(true); }
         window.addEventListener('hashchange', loadFromHash);
         loadFromHash();
         if (!fileMissing) status.set('Ready', 'ok');
@@ -280,5 +318,7 @@
     return page;
   }
 
-  SDR.page = { create: create };
+  var EXTRA_DEFAULTS = { fadeOn: false, fadeModel: 'rayleigh', fadeHz: 5, fadeK: 10, pnOn: false, pnHz: 10, adcOn: false, adcBits: 8, adcBackoff: 10 };
+
+  SDR.page = { create: create, EXTRA_DEFAULTS: EXTRA_DEFAULTS };
 })();

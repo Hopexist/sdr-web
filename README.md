@@ -3,7 +3,7 @@
 A software-defined radio simulator that runs entirely in the browser: AM, FM and QPSK
 modulators/demodulators, a channel model with noise and impairments, and Monte Carlo BER curves.
 
-**Status:** Phases 0–3 are done: foundations, AM, FM and the QPSK link. The BER page (Phase 5) and more channel impairments (Phase 4) are next.
+**Status:** Phases 0–4 are done: foundations, AM, FM, the QPSK link (streaming) and the full channel model. The BER page (Phase 5) is next.
 
 ## No install
 
@@ -38,14 +38,17 @@ js/core/                          pure DSP, no DOM (except plot.js)
   filters.js  SDR.filters  RRC taps, windowed-sinc fractional delay / resample, Kaiser lowpass (memoized), causal FIR (FFT overlap-add), complex FIR, polyphase
                            interpolate / decimateFiltered, first-order bilinear sections, DC blocker
   plot.js     SDR.plot     interactive Canvas 2D plots (the one DOM exception, see below)
-js/channel.js SDR.channel  AWGN at a given CNR, carrier phase offset (to be expanded)
+js/channel.js SDR.channel  streaming impairment stages + createChain/apply: multipath, Rayleigh/Rician fading (block or
+                           Jakes), timing, drift, CFO, phase noise, phase, AWGN, IQ imbalance, DC offset, ADC
 js/analog/am.js SDR.am     AM modulate, envelope/coherent demod (no DOM)
 js/analog/fm.js SDR.fm     FM transmit/receive chain, discriminator, PLL demod, emphasis, clicks, theory (no DOM)
 js/digital/sync.js SDR.sync  PLL (pluggable detector), loop gains from BnT/ζ, Gardner + Farrow timing loop,
                            4th-power CFO estimator, lock detection
 js/digital/mapping.js SDR.mapping  Gray QPSK map, hard/LLR demap, differential encode/decode
 js/digital/sequences.js SDR.seq    LFSR m-sequences (degree 5–10), 64-symbol preamble
-js/digital/qpsk.js SDR.qpsk  transmitter, receiver and runLink(cfg, rng): the whole link as one pure function
+js/digital/qpsk.js SDR.qpsk  frame builder (pilots), streaming createLink(cfg, rng) → step()/finish(), runLink (a loop over
+                           step), runLinkBatch (Phase 3 whole-signal reference, kept for the bit-exactness test)
+js/digital/equalizer.js SDR.eq  NLMS (T or T/2), CMA, zero-forcing from the true channel, combined responses
 js/theory.js SDR.theory      QPSK BER (AWGN, static phase error, DE-QPSK), Wilson interval
 js/audio.js   SDR.audio    Web Audio: load/decode/resample files, play/stop, volume
 js/ui/controls.js SDR.ui   sliders, selects, toggles, text, buttons, file input, URL-hash state, status bar,
@@ -125,4 +128,27 @@ decision-directed carrier detector uses the analytic Kp = 1.
 
 `SDR.qpsk.runLink(cfg, rng)` is the whole link as one pure function (the BER page will call it). With 10,000 payload bits
 it takes ≈ 30 ms at sps 8 with ideal sync and ≈ 105 ms with all stages real and all impairments on (≈ 17 / 45 ms at sps 4).
+
+## Phase 4: streaming link and full channel model
+
+**Streaming.** Every filter, interpolator, loop, AGC and equalizer is a stateful object (`create(cfg)` →
+`process(block)`), carrying its history between blocks. `SDR.qpsk.createLink(cfg, rng)` gives `step(nSymbols)` and
+`finish()`; `runLink` is a loop over `step()`. The test suite checks that the streaming link is bit-exact with the Phase 3
+whole-signal receiver for block sizes 64, 257 and 4096. Live mode and the quick BER check step the link 96 symbols at a
+time inside `runChunked`, so no slice blocks the page for more than ~20 ms. The RRC span defaults to automatic
+(20 symbols for β < 0.3, 16 below 0.5, else 12: truncation ISI under −45 dB).
+
+**Channel order** (`channelList` in qpsk.js, explained in js/channel.js): multipath → fading → timing/drift → CFO →
+phase noise → phase offset → AWGN → IQ imbalance → DC offset → ADC. Stages that need randomness of their own (fading,
+phase noise, per-tap fading) get a sub-generator drawn from the main rng only when enabled, so results never depend on
+the block size and links without them are unchanged. Block fading is applied per symbol before pulse shaping (the
+quasi-static model: no ISI from a gain jump); Jakes fading is applied to the waveform.
+
+**Receiver order:** DC blocker → IQ correction → matched filter → coarse CFO → Gardner timing → equalizer → carrier PLL or
+channel estimate (preamble LS, pilot-aided, ideal CSI) → frame sync → decisions. The equalizer comes after timing
+(it needs symbol-synchronous samples) and before the PLL (a decision-directed PLL cannot lock on ISI). With LMS or a
+preamble/pilot estimate, the frame is found first on the timing output, so LMS can train on the preamble.
+
+The AM and FM pages get Fading (Rayleigh/Rician, Doppler in Hz), Phase noise and ADC sections from the same channel
+code; FM has a "mobile flutter" preset (Rayleigh, fd = 50 Hz) to hear fading.
 
