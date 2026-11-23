@@ -7,10 +7,52 @@
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-<header><nav><a class="brand" href="index.html">sdr-web</a><a href="am.html">AM</a><a href="fm.html">FM</a><a href="qpsk.html">QPSK</a><a href="ber.html">BER</a><a href="tests.html">Tests</a></nav></header>
-<main>
-<h1>FM modulation / demodulation</h1>
-<p class="muted">Coming soon.</p>
+<header><nav><a class="brand" href="index.html">sdr-web</a><a href="am.html">AM</a><a href="fm.html" aria-current="page">FM</a><a href="qpsk.html">QPSK</a><a href="ber.html">BER</a><a href="tests.html">Tests</a></nav></header>
+<main class="wide">
+<h1>FM: frequency modulation</h1>
+<div class="sim-layout">
+  <aside id="controls" class="panel" aria-label="Simulation controls"></aside>
+  <section class="plots" id="plots">
+    <details class="card explainer">
+      <summary>What am I looking at?</summary>
+      <p><strong>FM basics.</strong> Frequency modulation keeps the amplitude constant and lets the message move the
+        <em>frequency</em>: the instantaneous frequency is Δf·m(t), so with |m| ≤ 1 the carrier swings by at most ±Δf (the
+        peak deviation). At complex baseband the signal is e^{jφ(t)} with φ the running integral of 2πΔf·m. That's why the
+        clean I/Q scatter is a ring of radius 1: only the angle carries information. The simulation runs the RF part at
+        384 kHz (8× the 48 kHz audio rate) so broadcast FM fits.</p>
+      <p><strong>β and Carson's rule.</strong> The modulation index β = Δf/W compares the deviation with the message bandwidth W.
+        A tone produces spectral lines at multiples of its frequency with powers J<sub>n</sub>(β)² (turn on "Show Bessel"),
+        and at β ≈ 2.405 the carrier line vanishes entirely. Carson's rule B<sub>T</sub> ≈ 2(Δf + W) captures about 98% of the
+        power. The "occupied BW (98%)" readout measures it directly.</p>
+      <p><strong>Trading bandwidth for SNR.</strong> Above threshold the output SNR is 3β²(β+1)·CNR for a tone (CNR measured in
+        B<sub>T</sub>), or 1.5β² times the baseband SNR γ. Doubling the deviation buys ~6 dB, paid for with bandwidth. AM
+        can never beat γ. In the SNR curve, each FM line sits above the AM reference by 10·log10(1.5β²) once it is above threshold.</p>
+      <p><strong>Threshold and clicks.</strong> When noise inside B<sub>T</sub> becomes comparable to the carrier (CNR around
+        10 dB), the noise phasor occasionally swings around the origin. The phase jumps by 2π and the discriminator outputs a
+        sharp spike: a <em>click</em>. Click rate rises steeply as CNR falls, and below threshold the output SNR collapses far
+        faster than the CNR. Watch the instantaneous-frequency plot and the click counter as you lower the CNR.</p>
+      <p><strong>Pre- and de-emphasis.</strong> FM detector noise grows with frequency (its spectrum rises as f²), so most of
+        it lands at the top of the audio band, where speech and music have little energy. Pre-emphasis boosts the high
+        frequencies before modulation, and the receiver's de-emphasis cuts them back, taking that noise with it. That's
+        typically a 10–13 dB gain for broadcast FM. A carrier frequency offset just shifts the discriminator output by a
+        constant, which the DC blocker removes.</p>
+    </details>
+  </section>
+</div>
 </main>
+<script src="js/core/rng.js"></script>
+<script src="js/core/complex.js"></script>
+<script src="js/core/mathx.js"></script>
+<script src="js/core/fft.js"></script>
+<script src="js/core/dsp.js"></script>
+<script src="js/core/filters.js"></script>
+<script src="js/core/plot.js"></script>
+<script src="js/channel.js"></script>
+<script src="js/digital/sync.js"></script>
+<script src="js/analog/fm.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/ui/controls.js"></script>
+<script src="js/ui/page.js"></script>
+<script src="js/ui/fm-page.js"></script>
 </body>
 </html>

@@ -49,19 +49,22 @@
     var spare = 0;
     var hasSpare = false;
 
-    // Box–Muller; the second value is cached for the next call.
+    // Box–Muller in Marsaglia's polar form (no sin/cos, ~2× faster); the second value is cached.
     function randn() {
       if (hasSpare) {
         hasSpare = false;
         return spare;
       }
-      var u1;
-      do { u1 = uniform(); } while (u1 === 0);
-      var r = Math.sqrt(-2 * Math.log(u1));
-      var th = 2 * Math.PI * uniform();
-      spare = r * Math.sin(th);
+      var u, v, s;
+      do {
+        u = 2 * uniform() - 1;
+        v = 2 * uniform() - 1;
+        s = u * u + v * v;
+      } while (s >= 1 || s === 0);
+      var f = Math.sqrt((-2 * Math.log(s)) / s);
+      spare = v * f;
       hasSpare = true;
-      return r * Math.cos(th);
+      return u * f;
     }
 
     // Total variance E|z|^2 = variance, split equally between re and im.

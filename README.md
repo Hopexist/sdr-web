@@ -3,7 +3,7 @@
 A software-defined radio simulator that runs entirely in the browser: AM, FM and QPSK
 modulators/demodulators, a channel model with noise and impairments, and Monte Carlo BER curves.
 
-**Status:** Phase 0 (foundations) and Phase 1 (interactive AM page) are done. FM, QPSK and BER are next.
+**Status:** Phases 0–2 are done: the foundations, the AM page and the FM page. QPSK and BER are next.
 
 ## No install
 
@@ -23,7 +23,8 @@ Because it has to run from `file://`:
 ```
 index.html            landing page
 am.html               AM simulator (interactive)
-fm.html qpsk.html     placeholders (coming soon)
+fm.html               FM simulator (interactive)
+qpsk.html             placeholder (coming soon)
 ber.html              placeholder (coming soon)
 tests.html            test runner + plot demos
 css/style.css         layout, light/dark theme via CSS variables
@@ -34,17 +35,22 @@ js/core/                          pure DSP, no DOM (except plot.js)
   mathx.js    SDR.mathx    erfc, Q, dB conversions, nextPow2, linspace
   fft.js      SDR.fft      radix-2 fft/ifft (in place), fftshift
   dsp.js      SDR.dsp      convolve, upsample, decimate, windows, welchPSD
-  filters.js  SDR.filters  Kaiser lowpass design, causal FIR (FFT overlap-add for long filters), DC blocker
+  filters.js  SDR.filters  Kaiser lowpass (memoized), causal FIR (FFT overlap-add), complex FIR, polyphase
+                           interpolate / decimateFiltered, first-order bilinear sections, DC blocker
   plot.js     SDR.plot     interactive Canvas 2D plots (the one DOM exception, see below)
 js/channel.js SDR.channel  AWGN at a given CNR, carrier phase offset (to be expanded)
-js/analog/am.js SDR.am     AM modulate, envelope/coherent demod, output-SNR measurement (no DOM)
+js/analog/am.js SDR.am     AM modulate, envelope/coherent demod (no DOM)
+js/analog/fm.js SDR.fm     FM transmit/receive chain, discriminator, PLL demod, emphasis, clicks, theory (no DOM)
+js/digital/sync.js SDR.sync  generic 2nd-order PLL (reused by QPSK later)
 js/audio.js   SDR.audio    Web Audio: load/decode/resample files, play/stop, volume
-js/ui/controls.js SDR.ui   sliders, selects, toggles, buttons, file input, URL-hash state, status bar
-js/ui/am-page.js           wiring for am.html
+js/ui/controls.js SDR.ui   sliders, selects, toggles, text, buttons, file input, URL-hash state, status bar,
+                           runChunked (time-budgeted generator runner for sweeps)
+js/ui/page.js SDR.page     shared simulator-page scaffold (panel, readouts, plot cards, sources, sweeps, audio)
+js/ui/am-page.js, fm-page.js  wiring for am.html / fm.html
 ```
 
-Script order: `rng, complex, mathx, fft, dsp, filters, plot`, then `channel`, `analog/*`, `audio`, `ui/controls`,
-and finally the page script.
+Script order: `rng, complex, mathx, fft, dsp, filters, plot`, then `channel`, `digital/sync`, `analog/*`, `audio`,
+`ui/controls`, `ui/page`, and finally the page script.
 
 ### plot.js is the one DOM exception in js/core/
 
@@ -53,7 +59,8 @@ but drawing and mouse/touch interaction are its whole job, so it creates canvase
 
 Plot controls: hover for a crosshair and values · wheel to zoom (Shift = x only, Alt = y only) · left-drag to pan ·
 right-drag or Ctrl+drag to box-zoom · double-click or ⟲ to reset · click a legend entry to show/hide it ·
-toolbar (top right) for reset, PNG and CSV of the visible range · touch: one-finger pan, pinch zoom.
+toolbar (top right) for reset, PNG and CSV of the visible range · touch: vertical swipes scroll the page,
+horizontal one-finger drag pans, pinch zooms; the 🔓 toolbar button captures all gestures for free panning.
 `setData()` keeps the user's zoom, so live updates don't snap the view back.
 
 ## Using the AM page
@@ -81,3 +88,17 @@ detection gives an output SNR of CNR + 10·log10(2·Pc / Pref), where Pc is the 
 - `welchPSD` returns a centred spectrum (−fs/2 … fs/2), scaled so that a complex tone of power P peaks
   at 10·log10(P) dB. Noise therefore reads as power per bin, not per Hz.
 - `convolve(x, h, 'same')` uses the numpy alignment (offset `floor((len(h)−1)/2)`).
+
+## Using the FM page
+
+Pick a preset (Narrowband, Broadcast, β = 1, β = 5) or set Δf and W yourself. The spectrum shows the
+Carson band, the ±Δf lines and the IF filter edges; for a tone, "Show Bessel line heights" overlays the
+theoretical J_n(β)². Lower the CNR toward 10 dB to watch the threshold: the click counter rises and spikes
+appear on the instantaneous-frequency plot. "Compute SNR curve" sweeps CNR for the β values you list and
+plots output SNR against the baseband SNR γ = C/(N0·W), with dashed theory lines, per-β threshold markers
+and the AM (DSB-SC) reference.
+
+Sample rates: audio fsA = 48 kHz; RF baseband fsR = 384 kHz (8×). **CNR on the FM page** is carrier power (1)
+over the noise power inside the IF bandwidth B_T. Above threshold the output SNR is
+3·Pm·(Δf/W)²·(B_T/W)·CNR, which for a tone with Carson B_T is the textbook 3β²(β+1)·CNR.
+

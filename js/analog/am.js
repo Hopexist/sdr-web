@@ -34,16 +34,7 @@
     return { y: SDR.filters.fir(r, lp.taps), delay: delay + lp.groupDelay };
   }
 
-  // Align out[n + delay] with ref[n], least-squares gain g, SNR = P(g·ref) / P(out − g·ref).
-  // The first `delay` aligned samples are skipped (causal-filter start-up transient).
-  function measureOutputSnr(ref, out, delay) {
-    var end = Math.min(ref.length, out.length - delay), rr = 0, ro = 0, res = 0, n;
-    for (n = delay; n < end; n++) { rr += ref[n] * ref[n]; ro += ref[n] * out[n + delay]; }
-    if (rr === 0) return { snrDb: NaN, gain: 0 };
-    var g = ro / rr;
-    for (n = delay; n < end; n++) { var e = out[n + delay] - g * ref[n]; res += e * e; } // second pass avoids cancellation
-    return { snrDb: 10 * Math.log10((g * g * rr) / Math.max(res, 1e-300)), gain: g };
-  }
-
-  SDR.am = { modulate: modulate, demodEnvelope: demodEnvelope, demodCoherent: demodCoherent, measureOutputSnr: measureOutputSnr };
+  // measureOutputSnr moved to SDR.dsp (shared with FM); kept here as an alias.
+  SDR.am = { modulate: modulate, demodEnvelope: demodEnvelope, demodCoherent: demodCoherent,
+    measureOutputSnr: function (ref, out, delay) { return SDR.dsp.measureOutputSnr(ref, out, delay); } };
 })();

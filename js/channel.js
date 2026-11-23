@@ -15,5 +15,8 @@
 
   function phaseOffset(x, phaseRad) { return SDR.cx.rotate(x, phaseRad); }
 
-  SDR.channel = { addAwgnCnr: addAwgnCnr, phaseOffset: phaseOffset };
+  // Carrier frequency offset: multiply by e^{j2π·f·n/fs}.
+  function freqOffset(x, f, fs) { return f ? SDR.cx.mixFreq(x, f, fs) : x; }
+
+  SDR.channel = { addAwgnCnr: addAwgnCnr, phaseOffset: phaseOffset, freqOffset: freqOffset };
 })();

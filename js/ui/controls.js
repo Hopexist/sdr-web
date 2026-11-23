@@ -42,6 +42,42 @@
     return { input: preview, commit: commit };
   }
 
+  // Runs a generator in time-budgeted slices so the page stays responsive.
+  // Each slice calls next() until ~budgetMs (default 12) has passed, then yields to the browser with
+  // setTimeout(0). Each yield should be a small unit of work (a few ms). The last yielded value goes
+  // to onProgress. Cancel with an AbortController signal; the generator's finally blocks run.
+  // Resolves { done, value } | { aborted } | { error }, plus { slices, maxSliceMs } for diagnostics.
+  function runChunked(task, opts) {
+    opts = opts || {};
+    var it = typeof task === 'function' ? task() : task, budget = opts.budgetMs || 12;
+    var slices = 0, maxSlice = 0, lastValue;
+    return new Promise(function (resolve) {
+      function finish(res) {
+        res.slices = slices; res.maxSliceMs = maxSlice;
+        if (opts.onDone) opts.onDone(res);
+        resolve(res);
+      }
+      function slice() {
+        if (opts.signal && opts.signal.aborted) {
+          try { it.return(); } catch (e) { /* generator already closed */ }
+          return finish({ aborted: true });
+        }
+        var t0 = performance.now(), r;
+        try {
+          do { r = it.next(); if (!r.done) lastValue = r.value; } while (!r.done && performance.now() - t0 < budget);
+        } catch (e) {
+          return finish({ error: e });
+        }
+        slices++;
+        maxSlice = Math.max(maxSlice, performance.now() - t0);
+        if (r.done) return finish({ done: true, value: r.value });
+        if (opts.onProgress) opts.onProgress(lastValue);
+        setTimeout(slice, 0);
+      }
+      setTimeout(slice, 0);
+    });
+  }
+
   // ---------- controls ----------
   function decimalsOf(step) {
     if (!step || step >= 1) return 0;
@@ -133,6 +169,25 @@
       el: wrap, key: o.key, input: inp,
       get: function () { return value; },
       set: function (v, silent) { value = +v; inp.value = value; if (!silent && o.onChange) o.onChange(value); },
+      setDisabled: function (d) { inp.disabled = d; wrap.classList.toggle('disabled', d); }
+    };
+  }
+
+  // text({ key, label, value, title, onChange }) — single-line text box, committed on change.
+  function text(o) {
+    var id = nextId('tx');
+    var wrap = el('div', 'ctl ctl-number');
+    var lab = el('label', '', o.label);
+    lab.htmlFor = id;
+    var inp = el('input', 'num');
+    inp.type = 'text'; inp.id = id; inp.name = o.key || id; inp.value = o.value;
+    if (o.title) wrap.title = o.title;
+    wrap.appendChild(lab); wrap.appendChild(inp);
+    inp.addEventListener('change', function () { if (o.onChange) o.onChange(inp.value); });
+    return {
+      el: wrap, key: o.key, input: inp,
+      get: function () { return inp.value; },
+      set: function (v, silent) { inp.value = v; if (!silent && o.onChange) o.onChange(inp.value); },
       setDisabled: function (d) { inp.disabled = d; wrap.classList.toggle('disabled', d); }
     };
   }
@@ -288,7 +343,7 @@
   }
 
   SDR.ui = {
-    debounce: debounce, throttle: throttle, live: live,
+    debounce: debounce, throttle: throttle, live: live, runChunked: runChunked, text: text,
     slider: slider, number: number, select: select, toggle: toggle, button: button, fileInput: fileInput, group: group,
     encodeHash: encodeHash, decodeHash: decodeHash, readHash: readHash, writeHash: writeHash,
     stateOf: stateOf, applyState: applyState, copyText: copyText, statusBar: statusBar

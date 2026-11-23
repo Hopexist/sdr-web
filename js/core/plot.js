@@ -188,6 +188,16 @@
     tbButton('⟲', 'Reset view (double-click)', function () { api.resetView(); });
     tbButton('PNG', 'Save as PNG', function () { api.downloadPNG(); });
     tbButton('CSV', 'Export visible series as CSV', function () { api.downloadCSV(); });
+    // Touch: by default vertical swipes scroll the page (touch-action: pan-y); the lock captures all gestures.
+    var locked = false;
+    if (navigator.maxTouchPoints > 0 || 'ontouchstart' in window) {
+      tbButton('🔓', 'Lock: capture all touch gestures on this plot (pan in both directions)', function () {
+        locked = !locked;
+        canvas.classList.toggle('touch-locked', locked);
+        this.textContent = locked ? '🔒' : '🔓';
+        this.setAttribute('aria-pressed', String(locked));
+      });
+    }
     wrap.appendChild(overlay); wrap.appendChild(tip); wrap.appendChild(tb);
     if (opts.title) canvas.setAttribute('aria-label', opts.title);
     canvas.setAttribute('role', 'img');
@@ -317,7 +327,17 @@
 
       // titles
       ctx.textAlign = 'center';
-      if (opts.title) { ctx.font = '600 13px ' + SANS; ctx.textBaseline = 'top'; ctx.fillText(opts.title, pl + pW / 2, 9); }
+      if (opts.title) {
+        ctx.font = '600 13px ' + SANS; ctx.textBaseline = 'top';
+        // Title must clear the toolbar (top-right): centered if it fits, else left-aligned and ellipsized.
+        var tbw = (tb.offsetWidth || 0) + 10, title = opts.title, tx = W / 2;
+        if (ctx.measureText(title).width > W - 2 * tbw) {
+          ctx.textAlign = 'left'; tx = 8;
+          while (title.length > 4 && ctx.measureText(title).width > W - tbw - 16) title = title.slice(0, -2) + '…';
+        }
+        ctx.fillText(title, tx, 9);
+        ctx.textAlign = 'center';
+      }
       ctx.font = '12px ' + SANS;
       if (opts.xLabel) { ctx.textBaseline = 'bottom'; ctx.fillText(opts.xLabel, pl + pW / 2, H - 4); }
       if (opts.yLabel) {
@@ -514,6 +534,7 @@
       var spx = (g.v.x1 - g.v.x0) * scale, spy = (g.v.ty1 - g.v.ty0) * scale;
       var nx0 = g.c.x - ((mid.x - L.pl) / L.pW) * spx;
       var nty0 = g.c.ty - (1 - (mid.y - L.pt) / L.pH) * spy;
+      if (pts.length === 1 && !locked) nty0 = g.v.ty0; // unlocked one-finger drag pans x only; vertical belongs to page scroll
       setViewT(nx0, nx0 + spx, nty0, nty0 + spy);
     }
 

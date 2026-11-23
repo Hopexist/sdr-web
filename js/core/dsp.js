@@ -96,8 +96,33 @@
     return { freqs: freqs, psdDb: psdDb };
   }
 
+  // Bandwidth containing `fraction` of the power (default 98%), from a Welch PSD:
+  // the span between the (1−f)/2 and (1+f)/2 points of the cumulative power.
+  function occupiedBandwidth(x, fs, opts) {
+    opts = opts || {};
+    var frac = opts.fraction || 0.98, p = opts.psd || welchPSD(x, fs, { nfft: opts.nfft || 8192 }); // pass a precomputed psd to reuse it
+    var n = p.psdDb.length, cum = new Float64Array(n), tot = 0, i;
+    for (i = 0; i < n; i++) { tot += Math.pow(10, p.psdDb[i] / 10); cum[i] = tot; }
+    var lo = 0, hi = n - 1;
+    while (lo < n - 1 && cum[lo] < tot * (1 - frac) / 2) lo++;
+    while (hi > 0 && cum[hi - 1] >= tot * (1 + frac) / 2) hi--;
+    return p.freqs[hi] - p.freqs[lo];
+  }
+
+  // Align out[n + delay] with ref[n], least-squares gain g, SNR = P(g·ref) / P(out − g·ref).
+  // The first `delay` aligned samples are skipped (causal-filter start-up transient).
+  function measureOutputSnr(ref, out, delay) {
+    var end = Math.min(ref.length, out.length - delay), rr = 0, ro = 0, res = 0, n;
+    for (n = delay; n < end; n++) { rr += ref[n] * ref[n]; ro += ref[n] * out[n + delay]; }
+    if (rr === 0) return { snrDb: NaN, gain: 0 };
+    var g = ro / rr;
+    for (n = delay; n < end; n++) { var e = out[n + delay] - g * ref[n]; res += e * e; } // second pass avoids cancellation
+    return { snrDb: 10 * Math.log10((g * g * rr) / Math.max(res, 1e-300)), gain: g };
+  }
+
   SDR.dsp = {
     convolve: convolve, upsample: upsample, decimate: decimate,
-    hann: hann, hamming: hamming, blackman: blackman, welchPSD: welchPSD
+    hann: hann, hamming: hamming, blackman: blackman, welchPSD: welchPSD,
+    occupiedBandwidth: occupiedBandwidth, measureOutputSnr: measureOutputSnr
   };
 })();

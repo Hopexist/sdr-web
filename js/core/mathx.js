@@ -36,8 +36,19 @@
     return y;
   }
 
+  // Bessel J_n(x) from J_n(x) = (1/2π)∫₀^{2π} cos(nτ − x·sinτ) dτ. The trapezoid rule on a periodic
+  // analytic integrand converges exponentially, so ~|x|+|n|+40 points give machine precision for any x, n.
+  function besselJ(n, x) {
+    var N = 2 * Math.ceil(Math.abs(x) + Math.abs(n) + 40), s = 0;
+    for (var k = 0; k < N; k++) {
+      var t = (2 * Math.PI * k) / N;
+      s += Math.cos(n * t - x * Math.sin(t));
+    }
+    return s / N;
+  }
+
   SDR.mathx = {
     erfc: erfc, Q: Q, db2lin: db2lin, lin2db: lin2db, db2pow: db2pow, pow2db: pow2db,
-    nextPow2: nextPow2, linspace: linspace
+    nextPow2: nextPow2, linspace: linspace, besselJ: besselJ
   };
 })();

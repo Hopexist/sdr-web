@@ -156,7 +156,8 @@ main.wide { max-width: 1400px; }
 
 /* Plot widget */
 .sdr-plot { position: relative; }
-.sdr-plot canvas.sdr-plot-canvas { display: block; touch-action: none; cursor: crosshair; }
+.sdr-plot canvas.sdr-plot-canvas { display: block; touch-action: pan-y; cursor: crosshair; }
+.sdr-plot canvas.sdr-plot-canvas.touch-locked { touch-action: none; }
 .sdr-plot canvas.sdr-plot-overlay { position: absolute; left: 0; top: 0; pointer-events: none; }
 .sdr-plot-tip {
   position: absolute;

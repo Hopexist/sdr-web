@@ -13,9 +13,22 @@
   // Linear-phase lowpass. `cutoff` is the −6 dB point (centre of the transition band), so the
   // noise-equivalent bandwidth ≈ cutoff. Passband edge = cutoff − transition/2.
   // Returns { taps, groupDelay, ripple } where ripple is the designed passband deviation δ.
+  // Designs are memoized (same parameters → same object), which also lets fir() reuse the cached FFT
+  // of the taps. Treat the returned taps as read-only.
+  var designs = new Map();
   function lowpass(o) {
     var fs = o.fs, cutoff = o.cutoff, tw = o.transition || 500, A = o.attenuation || 60;
     if (!(cutoff > 0 && cutoff < fs / 2)) throw new Error('SDR.filters.lowpass: cutoff must be in (0, fs/2)');
+    var key = fs + '|' + cutoff + '|' + tw + '|' + A;
+    var hit = designs.get(key);
+    if (hit) return hit;
+    if (designs.size > 64) designs.clear(); // shortcut: crude bound; a slider sweep touches only a few dozen designs
+    hit = design(fs, cutoff, tw, A);
+    designs.set(key, hit);
+    return hit;
+  }
+
+  function design(fs, cutoff, tw, A) {
     var dw = (2 * Math.PI * tw) / fs;
     var N = Math.ceil((A - 8) / (2.285 * dw)) + 1;
     if (N % 2 === 0) N++; // odd length → integer group delay
@@ -35,7 +48,8 @@
   var spectra = new WeakMap(); // taps → { nfft, re, im } cached FFT of the zero-padded taps
 
   // FFT overlap-add, same result as the direct form (to ~1e-15) but O(log N) per sample.
-  function firFFT(x, taps) {
+  // xi (optional) is an imaginary part: real taps filter re and im together in one complex pass.
+  function firFFT(x, taps, xi) {
     var nx = x.length, nh = taps.length, H = spectra.get(taps), i;
     if (!H) {
       var nf = 1;
@@ -45,12 +59,13 @@
       SDR.fft.fft(H.re, H.im);
       spectra.set(taps, H);
     }
-    var nfft = H.nfft, L = nfft - nh + 1, y = new Float64Array(nx);
+    var nfft = H.nfft, L = nfft - nh + 1, y = new Float64Array(nx), yi = xi ? new Float64Array(nx) : null;
     var re = new Float64Array(nfft), im = new Float64Array(nfft);
     for (var s = 0; s < nx; s += L) {
       re.fill(0); im.fill(0);
       var m = Math.min(L, nx - s);
       for (i = 0; i < m; i++) re[i] = x[s + i];
+      if (xi) for (i = 0; i < m; i++) im[i] = xi[s + i];
       SDR.fft.fft(re, im);
       for (i = 0; i < nfft; i++) {
         var a = re[i], b = im[i];
@@ -60,8 +75,15 @@
       SDR.fft.ifft(re, im);
       var end = Math.min(nfft, nx - s);
       for (i = 0; i < end; i++) y[s + i] += re[i];
+      if (xi) for (i = 0; i < end; i++) yi[s + i] += im[i];
     }
-    return y;
+    return xi ? { re: y, im: yi } : y;
+  }
+
+  // Complex input, real taps: one FFT pass for both parts when long, else direct form on each.
+  function firComplex(x, taps) {
+    if (taps.length > 32 && x.re.length > 4 * taps.length) return firFFT(x.re, taps, x.im);
+    return { re: fir(x.re, taps), im: fir(x.im, taps) };
   }
 
   // Causal FIR, output length = input length (output lags input by the filter's group delay).
@@ -79,14 +101,73 @@
 
   // shortcut: block mean removal (exact and zero-phase for a finite buffer); switch to a
   // one-pole IIR blocker if processing ever becomes streaming/chunked.
-  function dcBlock(x) {
-    var n = x.length, m = 0, i;
-    for (i = 0; i < n; i++) m += x[i];
-    m = n ? m / n : 0;
+  // `skip`: leading samples left out of the mean (e.g. filter warm-up, which would bias it).
+  function dcBlock(x, skip) {
+    var n = x.length, m = 0, i, s0 = skip && skip < n ? skip : 0;
+    for (i = s0; i < n; i++) m += x[i];
+    m = n - s0 ? m / (n - s0) : 0;
     var y = new Float64Array(n);
     for (i = 0; i < n; i++) y[i] = x[i] - m;
     return { y: y, groupDelay: 0 };
   }
 
-  SDR.filters = { lowpass: lowpass, fir: fir, dcBlock: dcBlock, besselI0: besselI0 };
+  // Anti-imaging / anti-aliasing filter for rate change by `rate`, designed at the high rate
+  // (in units of the low rate): passband to 0.35, stopband from 0.65 (images/aliases land outside
+  // the 0.35 passband), 80 dB. Shared by interpolate and decimateFiltered.
+  var rateCache = {};
+  function rateFilter(rate) {
+    return rateCache[rate] || (rateCache[rate] = lowpass({ cutoff: 0.5, fs: rate, transition: 0.3, attenuation: 80 }));
+  }
+
+  function mapComplex(x, fn) { return x.re !== undefined ? { re: fn(x.re), im: fn(x.im) } : fn(x); }
+
+  // Zero-stuff by L, lowpass, gain × L. Real or complex. groupDelay is in output (high-rate) samples.
+  // Polyphase: each output only sums the taps that land on non-zero (original) samples.
+  function interpolate(x, L) {
+    var h = rateFilter(L), taps = h.taps, nh = taps.length;
+    var y = mapComplex(x, function (v) {
+      var n = v.length * L, out = new Float64Array(n);
+      for (var o = 0; o < n; o++) {
+        var acc = 0;
+        for (var k = o % L; k < nh && k <= o; k += L) acc += taps[k] * v[(o - k) / L];
+        out[o] = acc * L;
+      }
+      return out;
+    });
+    return { y: y, groupDelay: h.groupDelay };
+  }
+
+  // Lowpass then keep samples phase, phase+M, ... Real or complex. Only kept outputs are computed.
+  // groupDelay is in input (high-rate) samples; choose `phase` so (total delay − phase) is a multiple of M.
+  function decimateFiltered(x, M, opts) {
+    var h = rateFilter(M), taps = h.taps, nh = taps.length, phase = (opts && opts.phase) || 0;
+    var y = mapComplex(x, function (v) {
+      var out = new Float64Array(Math.max(0, Math.ceil((v.length - phase) / M)));
+      for (var k = 0; k < out.length; k++) {
+        var idx = k * M + phase, kmax = idx < nh - 1 ? idx : nh - 1, acc = 0;
+        for (var j = 0; j <= kmax; j++) acc += taps[j] * v[idx - j];
+        out[k] = acc;
+      }
+      return out;
+    });
+    return { y: y, groupDelay: h.groupDelay, phase: phase };
+  }
+
+  // First-order section H(s) = (1 + s·a) / (1 + s·b), bilinear transform at fs. Swapping a and b
+  // gives the exact inverse, which is how pre-/de-emphasis stay perfect complements.
+  function firstOrder(x, a, b, fs) {
+    var K = 2 * fs, d = 1 + b * K;
+    var b0 = (1 + a * K) / d, b1 = (1 - a * K) / d, a1 = (1 - b * K) / d;
+    var y = new Float64Array(x.length), xp = 0, yp = 0;
+    for (var n = 0; n < x.length; n++) {
+      var v = b0 * x[n] + b1 * xp - a1 * yp;
+      xp = x[n]; yp = v; y[n] = v;
+    }
+    return y;
+  }
+
+  SDR.filters = {
+    lowpass: lowpass, fir: fir, firComplex: firComplex, dcBlock: dcBlock, besselI0: besselI0,
+    interpolate: interpolate, decimateFiltered: decimateFiltered, firstOrder: firstOrder
+  };
 })();

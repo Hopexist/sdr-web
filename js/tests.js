@@ -16,9 +16,14 @@
     check(name, err <= tol, 'actual=' + fmt(actual) + '  expected=' + fmt(expected) + '  |err|=' + fmt(err) + '  tol=' + fmt(tol));
   }
 
-  // A throwing group shows up red instead of killing the page.
+  // A throwing group shows up red instead of killing the page. A group may return a Promise (async tests).
+  var pending = [];
   function group(name, fn) {
-    try { fn(); } catch (e) { check(name + ': unexpected exception', false, e && e.stack ? e.stack : String(e)); }
+    function fail(e) { check(name + ': unexpected exception', false, e && e.stack ? e.stack : String(e)); }
+    try {
+      var r = fn();
+      if (r && typeof r.then === 'function') pending.push(r.then(null, fail));
+    } catch (e) { fail(e); }
   }
 
   function meanVar(a) {
@@ -185,6 +190,10 @@
     var fast = SDR.filters.fir(rx, d.taps), direct = SDR.dsp.convolve(rx, d.taps, 'full').subarray(0, rx.length), maxE = 0;
     for (i = 0; i < rx.length; i++) maxE = Math.max(maxE, Math.abs(fast[i] - direct[i]));
     check('fir: FFT overlap-add path matches direct convolution (< 1e-12)', maxE < 1e-12, 'max err=' + fmt(maxE));
+    var zc = SDR.rng.createRng(9).randnComplex(20000, 1), fc = SDR.filters.firComplex(zc, d.taps);
+    var re2 = SDR.filters.fir(zc.re, d.taps), im2 = SDR.filters.fir(zc.im, d.taps), maxC = 0;
+    for (i = 0; i < zc.re.length; i++) maxC = Math.max(maxC, Math.abs(fc.re[i] - re2[i]), Math.abs(fc.im[i] - im2[i]));
+    check('firComplex: one complex pass = filtering re and im separately (< 1e-12)', maxC < 1e-12, 'max err=' + fmt(maxC));
     var dc = SDR.filters.dcBlock(Float64Array.from([3, 4, 5]));
     check('dcBlock: removes mean, groupDelay 0', arraysClose(dc.y, [-1, 0, 1], 1e-15) && dc.groupDelay === 0);
   });
@@ -293,7 +302,111 @@
     p.destroy();
   });
 
+  // ---------------- Phase 2: rate change, emphasis, Bessel, FM ----------------
+  group('Rate change', function () {
+    var fs = 48000, n = 4800, x = tone(n, 1000, fs);
+    var up = SDR.filters.interpolate(x, 8), dn = SDR.filters.decimateFiltered(up.y, 8, { phase: 0 });
+    var D = up.groupDelay + dn.groupDelay, ph = D % 8;
+    dn = SDR.filters.decimateFiltered(up.y, 8, { phase: ph });
+    var d = (D - ph) / 8, e = 0, p = 0;
+    for (var k = 200; k < n - 200; k++) { var r = x[k - d]; p += r * r; e += (dn.y[k] - r) * (dn.y[k] - r); }
+    var errDb = 10 * Math.log10(e / p);
+    check('interpolate ×8 → decimate ÷8 round trip of a 1 kHz tone < −60 dB', errDb < -60, 'error = ' + errDb.toFixed(1) + ' dB, delay = ' + d + ' samples @48k');
+    var cz = SDR.filters.interpolate({ re: Float64Array.from([1, 0, 0]), im: new Float64Array(3) }, 4);
+    check('interpolate accepts complex input', cz.y.re.length === 12 && cz.y.im.length === 12);
+
+    var tn = tone(9600, 3000, fs), emp = SDR.fm.deEmphasis(SDR.fm.preEmphasis(tn, { fsA: fs, tau: 75e-6 }), { fsA: fs, tau: 75e-6 }), me = 0;
+    for (k = 0; k < tn.length; k++) me = Math.max(me, Math.abs(emp[k] - tn[k]));
+    check('deEmphasis(preEmphasis(x)) ≈ x (3 kHz tone, 75 µs)', me < 1e-9, 'max err = ' + fmt(me));
+    var pre = SDR.fm.preEmphasis(tn, { fsA: fs, tau: 75e-6 }), pk = 0;
+    for (k = 4800; k < tn.length; k++) pk = Math.max(pk, Math.abs(pre[k]));
+    check('pre-emphasis boosts a 3 kHz tone (raises peak deviation)', pk > 1.5, 'gain = ' + pk.toFixed(2));
+  });
+
+  group('Bessel', function () {
+    var J = SDR.mathx.besselJ;
+    [[0, 1, 0.7651976865579666], [1, 1, 0.44005058574493355], [2, 5, 0.04656511627775222], [0, 10, -0.2459357644513483],
+      [1, 10, 0.04347274616886144], [5, 10, -0.2340615281867936], [0, 2.404825557695773, 0], [-3, 2, -0.12894324947440206]].forEach(function (t) {
+      approx('J_' + t[0] + '(' + +t[1].toFixed(4) + ') to 1e-8', J(t[0], t[1]), t[2], 1e-8);
+    });
+  });
+
+  var FSA = 48000, FSR = 384000;
+  function fmLoop(beta, demod, extra) {
+    var W = 3000, dev = beta * W, mA = tone(24000, 1000, FSA);
+    var tx = SDR.fm.transmit(mA, { fsA: FSA, fsR: FSR, deviation: dev });
+    var rx = extra && extra.rx ? extra.rx(tx.x) : tx.x;
+    var r = SDR.fm.receive(rx, { fsA: FSA, fsR: FSR, deviation: dev, W: W, ifBw: SDR.fm.carson(dev, W), demod: demod, loopBw: 30000, txDelay: tx.delay });
+    return { mA: mA, tx: tx, r: r, dev: dev, W: W };
+  }
+
+  group('FM', function () {
+    [0.5, 2, 5].forEach(function (b) {
+      ['disc', 'pll'].forEach(function (d) {
+        var L = fmLoop(b, d), rho = corrAligned(L.mA, L.r.y, L.r.delay);
+        check('FM loopback ' + (d === 'pll' ? 'PLL' : 'discriminator') + ', β = ' + b + ': corr > 0.99', rho > 0.99, 'corr = ' + rho.toFixed(6));
+      });
+    });
+
+    [2, 5].forEach(function (b) {
+      var W = 3000, dev = b * W, n = 1 << 16, m = tone(n, W, FSR);
+      var obw = SDR.dsp.occupiedBandwidth(SDR.fm.modulate(m, { fsR: FSR, deviation: dev }), FSR);
+      var car = SDR.fm.carson(dev, W);
+      check('98% bandwidth within 10% of Carson, β = ' + b, Math.abs(obw / car - 1) < 0.1, 'measured ' + obw.toFixed(0) + ' Hz, Carson ' + car + ' Hz');
+    });
+
+    // Exactly periodic tone (128 cycles in 2^15 samples) → each line sits in one FFT bin.
+    [1, 2.4].forEach(function (b) {
+      var N = 1 << 15, fm = 1500, m = tone(N, fm, FSR), x = SDR.fm.modulate(m, { fsR: FSR, deviation: b * fm });
+      SDR.fft.fft(x.re, x.im);
+      for (var k = 0; k <= 3; k++) {
+        var bin = k * 128, pw = (x.re[bin] * x.re[bin] + x.im[bin] * x.im[bin]) / (N * N), th = Math.pow(SDR.mathx.besselJ(k, b), 2);
+        approx('line ' + k + ' power = J_' + k + '(' + b + ')² within 0.5 dB', 10 * Math.log10(pw), 10 * Math.log10(th), 0.5);
+      }
+    });
+
+    // Above threshold: CNR 25 dB in B_T, β = 2 → theory 3β²(β+1)·CNR.
+    var W = 3000, dev = 6000, bt = SDR.fm.carson(dev, W), mA = tone(24000, 1000, FSA);
+    var tx = SDR.fm.transmit(mA, { fsA: FSA, fsR: FSR, deviation: dev });
+    var rx = SDR.channel.addAwgnCnr(tx.x, 25, bt, FSR, SDR.rng.createRng(21), { refPower: 1 });
+    var r = SDR.fm.receive(rx, { fsA: FSA, fsR: FSR, deviation: dev, W: W, ifBw: bt, demod: 'disc', txDelay: tx.delay });
+    var meas = SDR.dsp.measureOutputSnr(mA, r.y, r.delay).snrDb;
+    var th = 10 * Math.log10(3 * 4 * 3 * Math.pow(10, 2.5));
+    approx('FM above threshold (CNR 25 dB, β = 2): SNR within 1.5 dB of 3β²(β+1)·CNR', meas, th, 1.5);
+    var clicks = SDR.fm.countClicks(r.ifOut, SDR.fm.ifFilter(tx.x, { fsR: FSR, bw: bt }).y, 2 * r.ifDelay);
+    check('FM clicks: none at 25 dB CNR', clicks === 0, clicks + ' clicks');
+    var rxLow = SDR.channel.addAwgnCnr(tx.x, 2, bt, FSR, SDR.rng.createRng(22), { refPower: 1 });
+    var rLow = SDR.fm.receive(rxLow, { fsA: FSA, fsR: FSR, deviation: dev, W: W, ifBw: bt, demod: 'disc', txDelay: tx.delay });
+    var clicksLow = SDR.fm.countClicks(rLow.ifOut, SDR.fm.ifFilter(tx.x, { fsR: FSR, bw: bt }).y, 2 * rLow.ifDelay);
+    check('FM clicks: many at 2 dB CNR', clicksLow > 20, clicksLow + ' clicks in 0.5 s');
+
+    // Frequency offset → DC of offset/Δf before DC removal.
+    var off = 2000, Lo = fmLoop(2, 'disc', { rx: function (x) { return SDR.channel.freqOffset(x, off, FSR); } }), s = 0, cnt = 0;
+    for (var i = 2000; i < Lo.r.inst.length; i++) { s += Lo.r.inst[i]; cnt++; }
+    approx('frequency offset 2 kHz → discriminator DC = 2k/6k', s / cnt, off / Lo.dev, 0.005);
+    approx('… and the audio output DC before removal matches', Lo.r.dc, off / Lo.dev, 0.005);
+  });
+
+  group('runChunked', function () {
+    // Iteration cap: under headless --virtual-time-budget, performance.now() does not advance while spinning.
+    function busy(ms) { var t = performance.now(); for (var k = 0; k < 2e6 && performance.now() - t < ms; k++) { /* spin */ } }
+    var finallyRan = false;
+    function* work() { for (var i = 0; i < 60; i++) { busy(2); yield i / 60; } return 'ok'; }
+    function* endless() { try { for (;;) { busy(2); yield 0; } } finally { finallyRan = true; } }
+    var p1 = SDR.ui.runChunked(work).then(function (res) {
+      check('runChunked: completes and returns the generator value', res.done && res.value === 'ok', res.slices + ' slices');
+      check('runChunked: no slice blocks more than 20 ms', res.maxSliceMs < 20, 'max slice ' + res.maxSliceMs.toFixed(1) + ' ms');
+    });
+    var ac = new AbortController(), progressSeen = 0;
+    var p2 = SDR.ui.runChunked(endless, { signal: ac.signal, onProgress: function () { if (++progressSeen === 2) ac.abort(); } }).then(function (res) {
+      check('runChunked: abort stops the task and runs its finally', res.aborted === true && finallyRan, 'aborted after ' + res.slices + ' slices');
+    });
+    return Promise.all([p1, p2]);
+  });
+
   // ---------------- render results ----------------
+  Promise.all(pending).then(render);
+  function render() {
   var nPass = results.filter(function (r) { return r.pass; }).length;
   var summary = document.getElementById('summary');
   summary.textContent = (nPass === results.length ? 'PASS ' : 'FAIL ') + nPass + ' / ' + results.length + ' tests passed';
@@ -309,6 +422,7 @@
     tr.appendChild(td1); tr.appendChild(td2);
     tbody.appendChild(tr);
   });
+  }
 
   // ---------------- demos ----------------
   var fsd = 8000, nS = 400, t = new Float64Array(nS), s = new Float64Array(nS);
