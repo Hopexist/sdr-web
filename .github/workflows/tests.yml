@@ -1,0 +1,27 @@
+# Runs tests.html and loads every page in headless Chrome on GitHub's servers.
+# Nothing is installed: python3 and Google Chrome come with ubuntu-latest; setup-node provides Node 22
+# (built-in WebSocket) for the DevTools-protocol runner in ci/run-browser-tests.mjs.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  browser-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Serve the site over http (so the Web Worker tests run too)
+        run: |
+          python3 -m http.server 8000 --bind 127.0.0.1 > server.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8000/tests.html > /dev/null && break; sleep 1; done
+      - name: tests.html (must print PASS) and every page loads without errors
+        run: node ci/run-browser-tests.mjs
+        env:
+          CHROME: google-chrome
+          BASE: http://127.0.0.1:8000

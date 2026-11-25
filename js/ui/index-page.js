@@ -1,4 +1,6 @@
-// Landing-page thumbnails, drawn with the plot library from a few lines of synthetic data.
+/**
+ * @file Landing-page thumbnails drawn with SDR.plot from a few lines of synthetic data (DOM).
+ */
 (function () {
   'use strict';
   var P = SDR.plot.createPlot, PAL = SDR.plot.PALETTE, base = { legend: false, grid: false, height: 150 }, i;
@@ -29,5 +31,7 @@
   // BER: AWGN vs Rayleigh theory
   var eb = [], aw = [], ry = [];
   for (var d = 0; d <= 30; d += 0.5) { eb.push(d); aw.push(SDR.theory.qpskAwgn(d)); ry.push(SDR.theory.qpskRayleigh(d)); }
+  if (SDR.shell) SDR.shell.tour([{ sel: '.landing-grid', text: 'Four simulators: start with AM or FM, then QPSK, then sweep BER curves.' },
+    { sel: '.site-footer', text: 'Press ? anywhere for keyboard shortcuts; T switches light and dark.' }]);
   thumb('th-ber', { yScale: 'log', yLim: [1e-6, 0.5] }).setData([{ type: 'line', x: eb, y: aw, color: PAL[0], lineWidth: 2 }, { type: 'line', x: eb, y: ry, color: PAL[3], lineWidth: 2 }]);
 })();

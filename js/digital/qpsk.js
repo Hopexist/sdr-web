@@ -1,14 +1,13 @@
-// SDR.qpsk — QPSK transmitter, streaming receiver, and the whole link as one pure function. No DOM.
-// Depends on: SDR.cx, SDR.fft, SDR.filters, SDR.mapping, SDR.seq, SDR.sync, SDR.channel, SDR.eq
-//
-// Conventions: symbols (±1 ± j)/√2 (Es = 1); RRC taps unit energy; complex AWGN per sample with variance
-// N0 = 1/(Es/N0). Frame on air: [lead-in | 64-symbol preamble | payload (+ pilots) | tail]. The lead-in is
-// random, unknown to the receiver, and gives the timing and carrier loops time to lock before the preamble.
-//
-// createLink(cfg, rng) streams the link in blocks: step(nSymbols) pushes that many symbols through
-// transmitter → channel → receiver (every filter, loop and estimator keeps its state between blocks);
-// finish() drains everything and returns the result. runLink(cfg, rng) is that loop. runLinkBatch is the
-// Phase 3 whole-signal receiver, kept as the reference the streaming link is tested against (bit-exact).
+/**
+ * @file SDR.qpsk — the QPSK link (pure). Depends on SDR.cx, SDR.fft, SDR.filters, SDR.mapping, SDR.seq, SDR.sync,
+ * SDR.channel, SDR.eq.
+ * createLink(cfg, rng) → { step(nSymbols) → { done, progress, errors, bits }, finish() → result, done }: the streaming link
+ * (transmitter → channel → receiver, state carried between blocks). runLink(cfg, rng) = loop over step() + finish().
+ * runLinkBatch(cfg, rng): TEST-ONLY Phase 3 whole-signal receiver, kept as the bit-exactness reference.
+ * buildFrame, transmit, channelList, withDefaults, textToBits, bitsToText, bitsToBytes. Config units: ebn0Db dB,
+ * sps samples/symbol, rolloff, span symbols | 'auto', channel.cfoRs × Rs, timingSym symbols, driftPpm ppm, phaseDeg °;
+ * rx.timingBnT / carrierBnT normalized loop bandwidths.
+ */
 (function () {
   'use strict';
   var SDR = (window.SDR = window.SDR || {});
@@ -717,7 +716,8 @@
     return link.finish();
   }
 
-  // Phase 3 whole-signal link (reference for the bit-exactness test).
+  // TEST-ONLY: Phase 3 whole-signal link, kept as the reference for the streaming bit-exactness test.
+  // No page calls it; use createLink / runLink.
   function runLinkBatch(cfgIn, rng) {
     var cfg = withDefaults(cfgIn || {});
     var tx = transmit(cfg, rng);

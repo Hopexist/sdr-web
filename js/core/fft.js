@@ -1,4 +1,8 @@
-// SDR.fft — in-place iterative radix-2 FFT with per-size cached tables. Pure, no DOM.
+/**
+ * @file SDR.fft — in-place iterative radix-2 FFT with per-size cached tables (pure).
+ * fft(re, im) forward (e^{−j…}, unscaled); ifft(re, im) inverse scaled by 1/N; length must be a power of 2
+ * (throws otherwise); fftshift(arr) → new array with bin 0 moved to the centre.
+ */
 (function () {
   'use strict';
   var SDR = (window.SDR = window.SDR || {});

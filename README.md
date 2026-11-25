@@ -1,175 +1,131 @@
 # sdr-web
 
-A software-defined radio simulator that runs entirely in the browser: AM, FM and QPSK
-modulators/demodulators, a channel model with noise and impairments, and Monte Carlo BER curves.
+[![tests](https://github.com/Hopexist/sdr-web/actions/workflows/tests.yml/badge.svg)](https://github.com/Hopexist/sdr-web/actions/workflows/tests.yml)
 
-**Status:** Phases 0–5 are done: foundations, AM, FM, the QPSK link (streaming), the full channel model and the BER page.
+A software-defined radio simulator that runs entirely in the browser: AM, FM and a full QPSK link, a channel with
+noise, fading, multipath and hardware impairments, and Monte Carlo BER curves checked against theory.
+Plain HTML, CSS and JavaScript, with no install and no libraries.
 
-## No install
+**Live site:** _coming soon (GitHub Pages)_ <!-- TODO: replace with the Pages URL once it is live -->
 
-Plain HTML, CSS and vanilla JavaScript. No Node, npm, bundler, framework, CDN or external library.
+![QPSK page: the receiver's constellation at every stage](docs/img/qpsk-dark.jpg)
 
-**To open it, double-click `index.html`.** It runs from `file://`. To check the core code, open
-`tests.html`: the banner at the top should read `PASS n / n`, and the demo plots below it are for
-checking by eye.
+## What's in it
 
-Because it has to run from `file://`:
-- scripts are classic `<script src>` tags in dependency order (no `type="module"`)
-- no Web Workers and no `fetch()` of local files
-- every file attaches to one global: `window.SDR = window.SDR || {}; SDR.fft = {...}`
+| Page | What you can do |
+|---|---|
+| **AM** | Tone, two-tone, chirp or your own audio file; DSB-LC / DSB-SC; envelope vs coherent detection; hear the result; output SNR vs CNR with theory. |
+| **FM** | Set Δf and W and watch Carson's band and the Bessel sidebands J_n(β)²; discriminator or PLL demodulator; 75 µs emphasis; push the CNR down and *hear* the threshold clicks. |
+| **QPSK** | A complete digital receiver: RRC matched filter, 4th-power CFO estimate, Gardner timing with a Farrow interpolator, decision-directed PLL, equalizers (NLMS, CMA, zero-forcing), preamble/pilot channel estimates, frame sync. Every stage can be **Real** or **Ideal**, and you see the constellation after each one. |
+| **BER** | Sweep any parameter (Eb/N0, ADC bits, loop bandwidth, Doppler…), watch points land on the theory curve with 95% confidence intervals, read off implementation loss, export CSV/JSON/PNG. Runs in a Web Worker pool when served over http. |
+| **Tests** | 221 checks run in your browser: DSP building blocks, noise scaling, noiseless loopbacks, sync loops locking, BER inside its confidence interval of theory. |
 
-## Layout
+Every run is reproducible from its seed, and "Copy link" puts the whole setup in the URL.
+Keyboard: `Space` run/play, `R` reset, `L` copy link, `T` theme, `?` for the list.
 
-```
-index.html            landing page
-am.html               AM simulator (interactive)
-fm.html               FM simulator (interactive)
-qpsk.html             QPSK link simulator (interactive)
-ber.html              BER sweeps + analog SNR (Monte Carlo, workers on http)
-tests.html            test runner + plot demos
-css/style.css         layout, light/dark theme via CSS variables
-js/tests.js           tests and demos
-js/core/                          pure DSP, no DOM (except plot.js)
-  rng.js      SDR.rng      seeded PRNG: xoshiro128** (default) or 'mulberry32'; randn, randnComplex, randomBits
-  complex.js  SDR.cx       complex-array arithmetic, power, rotate, mixFreq
-  mathx.js    SDR.mathx    erfc, Q, dB conversions, nextPow2, linspace
-  fft.js      SDR.fft      radix-2 fft/ifft (in place), fftshift
-  dsp.js      SDR.dsp      convolve, upsample, decimate, windows, welchPSD
-  filters.js  SDR.filters  RRC taps, windowed-sinc fractional delay / resample, Kaiser lowpass (memoized), causal FIR (FFT overlap-add), complex FIR, polyphase
-                           interpolate / decimateFiltered, first-order bilinear sections, DC blocker
-  plot.js     SDR.plot     interactive Canvas 2D plots (the one DOM exception, see below)
-js/channel.js SDR.channel  streaming impairment stages + createChain/apply: multipath, Rayleigh/Rician fading (block or
-                           Jakes), timing, drift, CFO, phase noise, phase, AWGN, IQ imbalance, DC offset, ADC
-js/analog/am.js SDR.am     AM modulate, envelope/coherent demod (no DOM)
-js/analog/fm.js SDR.fm     FM transmit/receive chain, discriminator, PLL demod, emphasis, clicks, theory (no DOM)
-js/digital/sync.js SDR.sync  PLL (pluggable detector), loop gains from BnT/ζ, Gardner + Farrow timing loop,
-                           4th-power CFO estimator, lock detection
-js/digital/mapping.js SDR.mapping  Gray QPSK map, hard/LLR demap, differential encode/decode
-js/digital/sequences.js SDR.seq    LFSR m-sequences (degree 5–10), 64-symbol preamble
-js/digital/qpsk.js SDR.qpsk  frame builder (pilots), streaming createLink(cfg, rng) → step()/finish(), runLink (a loop over
-                           step), runLinkBatch (Phase 3 whole-signal reference, kept for the bit-exactness test)
-js/digital/equalizer.js SDR.eq  NLMS (T or T/2), CMA, zero-forcing from the true channel, combined responses
-js/theory.js SDR.theory      QPSK BER (AWGN, static phase error, DE-QPSK), Wilson interval
-js/audio.js   SDR.audio    Web Audio: load/decode/resample files, play/stop, volume
-js/ui/controls.js SDR.ui   sliders, selects, toggles, text, buttons, file input, URL-hash state, status bar,
-                           runChunked (time-budgeted generator runner for sweeps)
-js/ui/page.js SDR.page     shared simulator-page scaffold (panel, readouts, plot cards, sources, sweeps, audio)
-js/ui/qpsk-controls.js     QPSK link controls, shared by the QPSK page and the BER curve editor
-js/ber.js     SDR.ber       sweep engine: setPath/getPath, seeds, stop rules, floor skip, required Eb/N0,
-                           implementation loss, diversity slope, theory, CSV/JSON, saved runs, worker pool
-js/ber-worker.js           classic Web Worker running one sweep point (http(s) only)
-js/ui/am-page.js, fm-page.js, qpsk-page.js, ber-page.js, index-page.js  wiring for each page
-```
+| AM | FM |
+|---|---|
+| ![AM page](docs/img/am-light.jpg) | ![FM page](docs/img/fm-light.jpg) |
+| **BER** | **Landing page** |
+| ![BER page with a finished sweep](docs/img/ber-dark.jpg) | ![Landing page](docs/img/index-light.jpg) |
 
-Script order: `rng, complex, mathx, fft, dsp, filters, plot`, then `channel`, `theory`, `digital/mapping, sequences, sync, qpsk`, `analog/*`, `audio`,
-`ui/controls`, `ui/page`, and finally the page script.
+## Verified against theory
 
-### plot.js is the one DOM exception in js/core/
+Numbers measured with the simulator itself (BER page presets and `tests.html`); every row is reproducible from its seed.
 
-Everything else in `js/core/` is pure computation. `plot.js` lives there because every page needs it,
-but drawing and mouse/touch interaction are its whole job, so it creates canvases, a tooltip and a toolbar.
+| Check | Simulated | Theory / reference |
+|---|---|---|
+| QPSK in AWGN, ideal sync: loss at BER 1e-3 / 1e-4 | −0.01 dB / −0.09 dB | 0 dB (Q(√(2Eb/N0))) |
+| QPSK, full real sync chain: loss at 1e-3 / 1e-4 | 0.10 dB / 0.14 dB | small, > 0 (loop jitter) |
+| Rayleigh fading: diversity slope | 0.98 decades/decade | 1 (0.999 over the same range) |
+| Rician K = 10 dB, BER at the test point | 6.98e-4 | 7.01e-4 |
+| Pilot-aided channel estimate vs ideal CSI (Rayleigh) | 1.07 dB worse | expected: estimation noise |
+| Severe multipath + NLMS equalizer: loss | 0.53 dB | — |
+| IQ imbalance correction: image rejection | 22.8 dB → 52.6 dB | — |
+| ADC SQNR at 4 / 8 / 12 bits | within 0.4 dB | 6.02·b + 1.76 − backoff |
+| Coarse CFO estimate error | ≈ 2e-7 × Rs | — |
+| FM output SNR above threshold | 40.8 dB | 40.6 dB (3β²(β+1)·CNR) |
+| FM carrier null at β = 2.4048 | J0 ≈ 1e-16 | J0(2.4048) = 0 |
+| FM threshold | 0 clicks/s at 10 dB CNR, 12/s at 8 dB | ≈ 10 dB |
+| Jakes fading autocorrelation | ≈ J0(2π·fd·τ) | J0(2π·fd·τ) |
 
-Plot controls: hover for a crosshair and values · wheel to zoom (Shift = x only, Alt = y only) · left-drag to pan ·
-right-drag or Ctrl+drag to box-zoom · double-click or ⟲ to reset · click a legend entry to show/hide it ·
-toolbar (top right) for reset, PNG and CSV of the visible range · touch: vertical swipes scroll the page,
-horizontal one-finger drag pans, pinch zooms; the 🔓 toolbar button captures all gestures for free panning.
-`setData()` keeps the user's zoom, so live updates don't snap the view back.
+Preset run times, main thread on file:// vs 8 workers over http (same results, same seeds):
+preset 1 11.0 → 6.3 s, preset 2 13.1 → 6.5 s, preset 4 25.3 → 8.8 s, preset 5 29.1 → 5.6 s, preset 6 5.0 → 1.1 s.
 
-## Using the AM page
+## Run it
 
-Pick a message (tone, two-tone, chirp, or your own audio file), set the AM type and μ, the channel
-(noise, CNR, phase offset, seed) and the detector. The plots and readouts update while you drag. During
-a drag they show a short 0.25 s preview, and the full 2 s run happens when you release. The URL hash
-always holds the current setup, so "Copy link" gives a link that restores it. "Compute SNR curve" sweeps
-CNR from −5 to 40 dB with both detectors.
+- **No install:** double-click `index.html`. Everything works from `file://`; BER sweeps run on the main thread.
+- **Faster sweeps:** serve the folder so the BER page can use Web Workers:
+  ```
+  python -m http.server 8000
+  ```
+  then open <http://localhost:8000>.
 
-**CNR definition:** carrier power (DSB-LC, which is 1) or total signal power (DSB-SC), divided by the
-noise power inside 2W, where W is the audio bandwidth slider. Under this definition, ideal coherent
-detection gives an output SNR of CNR + 10·log10(2·Pc / Pref), where Pc is the message power
-(μ²·Pm for DSB-LC, Pm for DSB-SC). The "ideal" readout and the dashed line both come from that formula.
+## Tests
 
-## Conventions
+Open `tests.html`. The banner should read **PASS 221 / 221**; the plots below it are demos to check by eye.
 
-- **Complex signals** are `{ re: Float64Array, im: Float64Array }` of equal length.
-- **Randomness** always comes from an `rng` object (`SDR.rng.createRng(seed)`) passed in by the caller,
-  so every run can be reproduced from its seed. Never call `Math.random()` in sim code.
-- **Sim code in `js/core/` never touches the DOM.** It is made of pure functions. `plot.js` is the one
-  exception, since drawing is its job.
-- Use typed arrays and avoid allocating inside hot loops.
-- dB helpers: `db2lin`/`lin2db` work on **amplitude** (20·log10) and `db2pow`/`pow2db` on **power** (10·log10).
-- `welchPSD` returns a centred spectrum (−fs/2 … fs/2), scaled so that a complex tone of power P peaks
-  at 10·log10(P) dB. Noise therefore reads as power per bin, not per Hz.
-- `convolve(x, h, 'same')` uses the numpy alignment (offset `floor((len(h)−1)/2)`).
+CI runs the same page on every push: [.github/workflows/tests.yml](.github/workflows/tests.yml) serves the site,
+drives headless Chrome over the DevTools protocol ([ci/run-browser-tests.mjs](ci/run-browser-tests.mjs), no npm),
+waits for `PASS`, then loads every page and fails on any error.
 
-## Using the FM page
+## How it's built
 
-Pick a preset (Narrowband, Broadcast, β = 1, β = 5) or set Δf and W yourself. The spectrum shows the
-Carson band, the ±Δf lines and the IF filter edges; for a tone, "Show Bessel line heights" overlays the
-theoretical J_n(β)². Lower the CNR toward 10 dB to watch the threshold: the click counter rises and spikes
-appear on the instantaneous-frequency plot. "Compute SNR curve" sweeps CNR for the β values you list and
-plots output SNR against the baseband SNR γ = C/(N0·W), with dashed theory lines, per-β threshold markers
-and the AM (DSB-SC) reference.
+- One global namespace (`window.SDR`) and classic `<script>` tags in dependency order, because Chrome blocks ES
+  modules and workers on `file://`.
+- All DSP is DOM-free and takes a seeded `rng`, so the same code runs on the page, in a Web Worker and in tests.
+- Complex signals are `{ re: Float64Array, im: Float64Array }`; symbols have Es = 1, RRC pulses unit energy, and
+  AWGN has variance N0 = 1/(Es/N0) per sample.
+- Every filter, loop and equalizer is a streaming block (`create` → `process(block)` → `reset`); the QPSK link is
+  `createLink(cfg, rng)` → `step(n)` → `finish()`, run in small time slices so the page never freezes.
+- The FFT, filters, plots, PRNG and erfc are all written from scratch.
 
-Sample rates: audio fsA = 48 kHz; RF baseband fsR = 384 kHz (8×). **CNR on the FM page** is carrier power (1)
-over the noise power inside the IF bandwidth B_T. Above threshold the output SNR is
-3·Pm·(Δf/W)²·(B_T/W)·CNR, which for a tone with Carson B_T is the textbook 3β²(β+1)·CNR.
+Details, diagrams and the reasoning behind the channel and receiver order: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+History: [CHANGELOG.md](CHANGELOG.md).
 
-## Using the QPSK page
+## What I learned
 
-Start with a preset ("Ideal link", "Phase offset only", "CFO + timing", "Everything on", "Loop too wide", "Loop too narrow"),
-then change one thing at a time. Each receiver stage (coarse CFO, timing, carrier, frame sync) can be **Real** (it
-estimates) or **Ideal** (a genie uses the true channel value), so you can isolate one block. The six constellations show
-the signal after each stage, coloured early → late. The loop traces compare every estimate with the true value (dashed).
-"▶ Live" sends new frames continuously; "Quick BER check" runs until 100 errors or 10⁶ bits and shows a 95% Wilson
-interval next to theory. Switch the payload to Text to send a message and see which characters arrive wrong.
+<!-- DRAFT: edit -->
+- **Noise scaling is a convention, and it has to be written down once.** Eb/N0, Es/N0 and per-sample SNR differ by
+  10·log10(2) and 10·log10(sps). Fixing Es = 1 and unit-energy pulses made the AWGN variance a one-liner, and a test
+  of measured SNR caught every mistake before a BER curve did.
 
-**Digital-link conventions** (tested): symbols (±1 ± j)/√2 so Es = 1; RRC taps with Σg² = 1; complex AWGN per sample with
-variance N0 = 1/(Es/N0), Es/N0 = Eb/N0 + 3.01 dB. Per-sample SNR = Es/N0 − 10·log10(sps)
-(`SDR.channel.snrPerSampleDb`). Frames are [512 random lead-in symbols | 64-symbol preamble | payload | tail]; the lead-in
-lets the loops lock before the preamble. Loop gains: θ = BnT/(ζ + 1/(4ζ)), K1 = 4ζθ/((1 + 2ζθ + θ²)·Kp),
-K2 = 4θ²/((1 + 2ζθ + θ²)·Kp). Gardner's Kp is **measured** from its S-curve (cached per roll-off/sps/span); the
-decision-directed carrier detector uses the analytic Kp = 1.
+<!-- DRAFT: edit -->
+- **The matched filter is where the SNR comes from.** Pulse shaping and matched filtering with the same RRC gives
+  a Nyquist pulse with zero ISI at the right sampling instant, and the per-sample SNR, which is low, becomes Es/N0 at
+  the symbol strobe.
 
-`SDR.qpsk.runLink(cfg, rng)` is the whole link as one pure function (the BER page will call it). With 10,000 payload bits
-it takes ≈ 30 ms at sps 8 with ideal sync and ≈ 105 ms with all stages real and all impairments on (≈ 17 / 45 ms at sps 4).
+<!-- DRAFT: edit -->
+- **Loop bandwidth is a trade-off you can see.** A wide carrier loop locks fast but lets noise in as phase jitter; a
+  narrow one is clean but slow and loses lock under phase noise. The "Loop too wide / too narrow" presets and the
+  phase-noise sweep show the optimum moving with the linewidth.
 
-## Phase 4: streaming link and full channel model
+<!-- DRAFT: edit -->
+- **Cycle slips are why the preamble matters.** QPSK has a 90° ambiguity, and a PLL that slips a quarter turn
+  rotates every following decision. Resolving the ambiguity on a known preamble (or using differential coding) is
+  what keeps the BER from jumping to 0.5 for the rest of a frame.
 
-**Streaming.** Every filter, interpolator, loop, AGC and equalizer is a stateful object (`create(cfg)` →
-`process(block)`), carrying its history between blocks. `SDR.qpsk.createLink(cfg, rng)` gives `step(nSymbols)` and
-`finish()`; `runLink` is a loop over `step()`. The test suite checks that the streaming link is bit-exact with the Phase 3
-whole-signal receiver for block sizes 64, 257 and 4096. Live mode and the quick BER check step the link 96 symbols at a
-time inside `runChunked`, so no slice blocks the page for more than ~20 ms. The RRC span defaults to automatic
-(20 symbols for β < 0.3, 16 below 0.5, else 12: truncation ISI under −45 dB).
+<!-- DRAFT: edit -->
+- **Clipping barely hurts QPSK.** All four points have the same amplitude and the information is in the signs of
+  I and Q, so clipping the peaks at 0 dB backoff costs much less than its SQNR suggests. A multi-level constellation
+  like 16-QAM would not be so forgiving.
 
-**Channel order** (`channelList` in qpsk.js, explained in js/channel.js): multipath → fading → timing/drift → CFO →
-phase noise → phase offset → AWGN → IQ imbalance → DC offset → ADC. Stages that need randomness of their own (fading,
-phase noise, per-tap fading) get a sub-generator drawn from the main rng only when enabled, so results never depend on
-the block size and links without them are unchanged. Block fading is applied per symbol before pulse shaping (the
-quasi-static model: no ISI from a gain jump); Jakes fading is applied to the waveform.
+<!-- DRAFT: edit -->
+- **Equalizers can't fix spectral nulls.** A zero-forcing equalizer inverts the channel, so a deep null becomes huge
+  noise gain; LMS/MMSE backs off instead. The equalizer's response plot shows it.
 
-**Receiver order:** DC blocker → IQ correction → matched filter → coarse CFO → Gardner timing → equalizer → carrier PLL or
-channel estimate (preamble LS, pilot-aided, ideal CSI) → frame sync → decisions. The equalizer comes after timing
-(it needs symbol-synchronous samples) and before the PLL (a decision-directed PLL cannot lock on ISI). With LMS or a
-preamble/pilot estimate, the frame is found first on the timing output, so LMS can train on the preamble.
+<!-- DRAFT: edit -->
+- **Streaming DSP is mostly about state.** Moving from whole-signal to block processing meant every filter, loop and
+  interpolator had to carry its history across block edges. A bit-exactness test against the old batch receiver at
+  odd block sizes (64, 257, 4096) found every off-by-one.
 
-The AM and FM pages get Fading (Rayleigh/Rician, Doppler in Hz), Phase noise and ADC sections from the same channel
-code; FM has a "mobile flutter" preset (Rayleigh, fd = 50 Hz) to hear fading.
+## Limitations and future work
 
-## Phase 5: BER page
-
-A sweep is a QPSK link config plus a swept parameter (a path into the config: `ebn0Db`, `adc.bits`, `rx.carrier.bnT`,
-`fading.fdTs`, `pilots.spacing`, …), a list of values (`0:1:10` or `2, 4, 8`), stop rules (min errors, default 100;
-max bits; max seconds per point) and a BER floor. Each point runs frames of the streaming link until a rule fires and
-records errors, bits, BER, its Wilson 95% interval, EVM, time and what stopped it. Point i uses seed
-`deriveSeed(sweepSeed, i)`, so a sweep gives the same numbers on the main thread, in Node and in workers (points stopped
-by the time limit depend on machine speed). Upward Eb/N0 sweeps stop early once a point has 0 errors at max bits or a
-BER under the floor.
-
-Run it from file:// (main thread, `runChunked`, pause/resume/stop) or serve the folder (e.g. `python -m http.server`)
-to get a pool of up to 8 Web Workers. The page shows which mode is running. Curves are edited with the same controls as
-the QPSK page; "📈 Sweep this setup" on the QPSK page sends its setup over as a new curve. Nine presets, CSV / JSON / PNG
-export, JSON import, a saved-runs library in localStorage (falls back to memory if storage is blocked), overlaying saved
-runs, and "Copy link" (the sweep definition, not the results). The "Analog SNR" tab overlays AM envelope, AM coherent
-and FM output SNR against baseband SNR γ with theory lines.
-
+- Only QPSK: 8-PSK and 16-QAM (with theory curves) are next.
+- No channel coding: a rate-1/2 convolutional code with hard- and soft-decision Viterbi would show coding gain.
+- No OFDM (cyclic prefix, per-subcarrier equalization).
+- Floating point only: a fixed-point receiver (quantized matched filter and PLL, BER vs word length) would bridge to
+  FPGA/ASIC work.
+- Simulated signals only: loading real IQ recordings (`.wav` IQ or `.cu8`) is not supported yet.
+- BER points stopped by the per-point time limit depend on machine speed; points stopped by error or bit counts are
+  exactly reproducible.

@@ -1,16 +1,9 @@
-// SDR.eq — adaptive and fixed linear equalizers on timing-recovered symbols. Pure, no DOM.
-//
-// Input per symbol k: the strobe y_k and (for fractionally spaced T/2 operation) the midpoint m_k sampled
-// half a symbol earlier, both produced by the Gardner loop. The regressor for output k (main tap index m)
-//   symbol-spaced:  [y_{k+m}, y_{k+m−1}, …]            (n taps)
-//   T/2-spaced:     [y_{k+m}, m_{k+m}, y_{k+m−1}, …]   (n taps, two per symbol)
-// so output k is available once input k + m has arrived (latency m symbols). Taps start as a unit
-// impulse on the main tap.
-//
-// Placement in the receiver: after timing recovery (the equalizer needs symbol-synchronous samples, and
-// the Gardner detector is phase-blind so it works on the distorted signal) and before the carrier PLL
-// (a decision-directed PLL on a signal with ISI sees wrong decisions and cannot lock; removing ISI first
-// gives it clean decisions, and the joint update below lets the equalizer ignore the PLL's rotation).
+/**
+ * @file SDR.eq — linear equalizers on timing-recovered symbols (pure).
+ * create({ nTaps, mainTap symbols, fractional (T/2), mu, taps }) → { push(y, m), output(), adapt(er, ei) (NLMS),
+ * adaptCma(zr, zi), taps, latency }; zfTaps(cs, cm, o) zero-forcing from the true channel; combined(w, cs, cm, frac)
+ * symbol-rate channel·equalizer response; responseDb(h, freqs (cycles/sample)).
+ */
 (function () {
   'use strict';
   var SDR = (window.SDR = window.SDR || {});

@@ -1,6 +1,8 @@
-// QPSK page: controls → SDR.qpsk link (streaming) → per-stage constellations, eye, spectrum, loop traces,
-// fading / equalizer / ADC views, correlation, error map, readouts; Live mode and a quick BER check, both
-// stepping the streaming link through SDR.ui.runChunked so no slice blocks the page for long.
+/**
+ * @file QPSK page wiring (DOM): SDR.qpskControls → SDR.qpsk.runLink → per-stage constellations, eye, spectrum,
+ * fading / equalizer / ADC views, loop traces, correlation, error map, readouts; Live mode and the quick BER check
+ * (streaming steps through SDR.ui.runChunked).
+ */
 (function () {
   'use strict';
   var ui = SDR.ui, DEG = Math.PI / 180, PAL = SDR.plot.PALETTE, UI_BLOCK = 96;   // symbols per streaming step in Live / BER
@@ -8,6 +10,10 @@
 
   var page = SDR.page.create({
     defaults: DEFAULTS, run: run, sync: sync, audio: false,
+    tour: [{ sel: '#controls .btn-row', text: 'Presets load a complete scenario: impairments, receiver settings and the problem each one demonstrates.' },
+      { sel: '.readouts', text: 'BER against theory, EVM, estimates vs true values, lock status, and a status line naming the dominant problem.' },
+      { sel: '.plot-grid', text: 'The constellation after every receiver stage, coloured early to late, so you can watch each loop converge.' },
+      { sel: '#controls', text: 'Every receiver stage can be Real (it estimates) or Ideal (a genie), to isolate one block at a time.' }],
     readouts: [['ber', 'BER (errors / bits)'], ['theory', 'Theory BER'], ['evm', 'EVM'], ['esn0', 'Es/N0 from EVM / true'],
       ['cfo', 'CFO est / true (Rs)'], ['phase', 'Phase est / true'], ['timing', 'Timing est / true (sym)'], ['lock', 'Lock (timing, carrier)'],
       ['conv', 'Convergence (symbols)'], ['fade', 'Fading: min |h| / time < −10 dB'], ['eqr', 'Equalizer MSE / convergence'],
@@ -136,7 +142,7 @@
     for (var b = 0; b < NB; b++) {
       var sx = [], sy = [];
       for (var i = b * per; i < Math.min(idx.length, (b + 1) * per); i++) { sx.push(xs[idx[i]]); sy.push(ys[idx[i]]); }
-      out.push({ type: 'scatter', x: sx, y: sy, radius: radius || 1.5, alpha: 0.75, color: 'hsl(' + Math.round(220 - (180 * b) / (NB - 1)) + ', 80%, 55%)' });
+      out.push({ type: 'scatter', x: sx, y: sy, radius: radius || 1.5, alpha: 0.75, color: 'hsl(' + Math.round(220 - (180 * b) / (NB - 1)) + ', 85%, 42%)' });
     }
     return out;
   }
@@ -159,7 +165,7 @@
     spread(t.payload.re.length, 3000).forEach(function (k) { var o = errSym.has(k) ? bad : ok; o.x.push(t.payload.re[k]); o.y.push(t.payload.im[k]); });
     var series = [];
     if (live) {
-      history.unshift(ok); if (history.length > 6) history.pop();
+      history.unshift(ok); if (history.length > (SDR.shell && SDR.shell.reducedMotion() ? 1 : 6)) history.pop();   // reduced motion: no fade trail
       for (i = history.length - 1; i >= 1; i--) series.push({ type: 'scatter', x: history[i].x, y: history[i].y, radius: 1.5, alpha: 0.5 * Math.pow(0.6, i), color: PAL[2] });
     }
     series.push({ type: 'scatter', x: ok.x, y: ok.y, radius: 1.5, alpha: 0.75, color: PAL[2] });
@@ -396,14 +402,17 @@
         page.status.set('Live: frame ' + frames + ' (' + (frames / ((performance.now() - t0) / 1000)).toFixed(1) + ' frames/s)');
         yield frames;
       }
-    }, { signal: ac.signal }).then(function (res) {
+    }, { signal: ac.signal, isPaused: function () {   // reduced motion: at most 2 frames per second
+      if (!(SDR.shell && SDR.shell.reducedMotion())) return false;
+      var now = performance.now(); if (now < nextFrameAt) return true; nextFrameAt = now + 500; return false;
+    } }).then(function (res) {
       ac = null; setBusy(null); history = [];
       lastLive = res;
-      commit();
-      page.status.set('Live stopped after ' + frames + ' frames (' + report(res) + ')', 'ok');
+      commit(function () { page.status.set('Live stopped after ' + frames + ' frames (' + report(res) + ')', 'ok'); });
     });
   }
-  var lastLive = null;
+  var lastLive = null, nextFrameAt = 0;
+  if (SDR.shell) SDR.shell.action('space', toggleLive, 'Start / stop Live mode');
 
   function toggleBer() {
     if (task) return ac.abort();

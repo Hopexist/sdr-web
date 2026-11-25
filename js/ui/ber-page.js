@@ -1,6 +1,7 @@
-// BER page: sweep builder (curves), Monte Carlo engine (main thread via runChunked, or a worker pool on
-// http(s)), live log-BER plot with Wilson error bars and theory, results/summary tables, export/import,
-// saved-runs library, and an "Analog SNR" tab for the AM/FM output-SNR sweeps.
+/**
+ * @file BER page wiring (DOM): sweep builder (curves edited with SDR.qpskControls), SDR.ber engine on the main thread
+ * or a worker pool, live log-BER plot, results/summary tables, export/import, saved runs, Analog SNR tab.
+ */
 (function () {
   'use strict';
   var ui = SDR.ui, B = SDR.ber, PAL = SDR.plot.PALETTE, QD = SDR.qpskControls.DEFAULTS;
@@ -477,4 +478,13 @@
     } else loadPreset(0);
   } catch (e) { loadPreset(0); status.set('Could not read the link: ' + e.message, 'err'); }
   renderLib();
+  if (SDR.shell) {
+    SDR.shell.action('space', function () { if (running) togglePause(); else start(curves.filter(function (c) { return c.enabled; })); }, 'Run all curves / pause');
+    SDR.shell.action('reset', function () { loadPreset(0); }, 'Reload the first preset');
+    SDR.shell.action('link', copyLink, 'Copy a link to this sweep definition');
+    SDR.shell.tour([{ sel: '#controls', text: 'Load a preset (each comes with a one-line "what to look for"), or build curves of your own.' },
+      { sel: '.curve-list', text: 'Each curve is a full QPSK link setup plus the parameter it sweeps; tick, reorder, duplicate or delete them.' },
+      { sel: '#plots .card.plot', text: 'Simulation markers carry 95% error bars; solid lines are theory; the dB labels mark the required Eb/N0.' },
+      { sel: '.tabs', text: 'The Analog SNR tab overlays AM and FM output SNR on one axis.' }]);
+  }
 })();

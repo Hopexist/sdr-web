@@ -1,4 +1,9 @@
-// SDR.mathx — scalar math helpers. Pure, no DOM.
+/**
+ * @file SDR.mathx — scalar math (pure).
+ * erfc(x) (Numerical Recipes erfcc, fractional error < 1.2e-7), Q(x) = ½·erfc(x/√2),
+ * db2lin / lin2db (amplitude, 20·log10), db2pow / pow2db (power, 10·log10), nextPow2(n), linspace(a, b, n),
+ * besselJ(n, x) (integer order, trapezoid on the integral form; machine precision).
+ */
 (function () {
   'use strict';
   var SDR = (window.SDR = window.SDR || {});

@@ -1,5 +1,10 @@
-// SDR.theory — closed-form BER curves and confidence intervals. Pure, no DOM.
-// Depends on: SDR.mathx
+/**
+ * @file SDR.theory — closed-form results (pure). Eb/N0 arguments in dB.
+ * qpskAwgn(ebn0Db) = Q(√(2Eb/N0)); qpskPhaseError(ebn0Db, phi rad); dqpskAwgn (DE-QPSK ≈ 2p(1−p));
+ * qpskRayleigh(ebn0Db); qpskRician(ebn0Db, kDb) (Craig/MGF, Simpson); adcSqnr(bits, backoffDb) dB;
+ * qpskEbn0ForBer(p), rayleighEbn0ForBer(p) (inverses); wilsonInterval(k, n, z) → [lo, hi];
+ * normalQuantileUpper(p) → z with P(Z > z) = p; chi2Quantile(p, k).
+ */
 (function () {
   'use strict';
   var SDR = (window.SDR = window.SDR || {});
@@ -63,10 +68,22 @@
     return [Math.max(0, c - h), Math.min(1, c + h)];
   }
 
+  // Standard-normal quantile: z with P(Z > z) = p (bisection on Q).
+  function normalQuantileUpper(p) {
+    var lo = -40, hi = 40;
+    for (var i = 0; i < 100; i++) { var m = (lo + hi) / 2; if (SDR.mathx.Q(m) > p) lo = m; else hi = m; }
+    return (lo + hi) / 2;
+  }
+  // χ² quantile with k degrees of freedom at probability p (Wilson–Hilferty, accurate to ~1% for k ≥ 3).
+  function chi2Quantile(p, k) {
+    var z = normalQuantileUpper(1 - p), a = 2 / (9 * k);
+    return k * Math.pow(1 - a + z * Math.sqrt(a), 3);
+  }
+
   // Inverse of qpskRayleigh (closed form): γ = (1 − 2p)² / (1 − (1 − 2p)²).
   function rayleighEbn0ForBer(p) { var a = (1 - 2 * p) * (1 - 2 * p); return 10 * Math.log10(a / (1 - a)); }
 
   SDR.theory = { qpskAwgn: qpskAwgn, qpskPhaseError: qpskPhaseError, dqpskAwgn: dqpskAwgn,
     qpskRayleigh: qpskRayleigh, qpskRician: qpskRician, adcSqnr: adcSqnr, rayleighEbn0ForBer: rayleighEbn0ForBer,
-    qpskEbn0ForBer: qpskEbn0ForBer, wilsonInterval: wilsonInterval };
+    qpskEbn0ForBer: qpskEbn0ForBer, wilsonInterval: wilsonInterval, normalQuantileUpper: normalQuantileUpper, chi2Quantile: chi2Quantile };
 })();

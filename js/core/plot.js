@@ -1,28 +1,20 @@
-// SDR.plot — interactive Canvas 2D plotting.
-// NOTE: the one file in js/core/ that touches the DOM (drawing and interaction are its whole job).
-//
-//   const p = SDR.plot.createPlot(canvas, { title, xLabel, yLabel, xUnit, yUnit, xLim, yLim,
-//                                           yScale: 'linear' | 'log', equalAspect, annotations });
-//   p.setData([{ type: 'line', x, y, label }, { type: 'scatter', ... }, { type: 'errorbar', x, y, yLow, yHigh }]);
-//   xScale: 'log' gives a log x axis. A series may carry info[i] strings shown in the hover tooltip.
-//
-// Interaction: hover = crosshair + tooltip; wheel = zoom (Shift: x only, Alt: y only);
-// left-drag = pan; right-drag or Ctrl+drag = box zoom; double-click or ⟲ = reset;
-// click a legend entry = show/hide; touch: one-finger pan, pinch zoom.
-// setData() keeps the user's zoom; until they zoom, the view follows the data (or xLim/yLim).
-//
-// Annotations (drawn in data coordinates):
-//   { type: 'band', x0, x1, label, color }   shaded x-interval
-//   { type: 'text', x, y, text, color }      label (y omitted → top of plot)
-//   { type: 'vline', x, label, color }
-//   { type: 'hline', y, label, color, dash }
-// Series options: color, label, lineWidth, dash (lines), radius (points), alpha (lines and points).
+/**
+ * @file SDR.plot — interactive Canvas 2D plots. The one file in js/core/ that touches the DOM (drawing is its job).
+ * createPlot(canvas, { title, xLabel, yLabel, xUnit, yUnit, xLim, yLim, xScale/yScale 'linear' | 'log', equalAspect,
+ *   legend, grid, height px, annotations: [{ type: 'band' | 'vline' | 'hline' | 'text', … }] })
+ * → { setData(series[]), setOptions(o), resetView(), getView(), setView(v), isZoomed(), draw(), toPNG() → data URL,
+ *   downloadPNG(name), toCSV(), downloadCSV(name), element, destroy() }.
+ * Series: { type: 'line' | 'scatter' | 'errorbar', x, y, yLow, yHigh, label, color, lineWidth, dash, radius, alpha, info[] }.
+ * Hover crosshair + tooltip, wheel zoom (Shift x / Alt y), drag pan, box zoom, legend toggles, touch pan/pinch,
+ * toolbar (reset, PNG, CSV), aria-label summary of the current data. setData() keeps the user's zoom.
+ */
 (function () {
   'use strict';
   var SDR = (window.SDR = window.SDR || {});
 
-  // Mid-luminance hues: readable on both white and near-black backgrounds.
-  var PALETTE = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#a855f7', '#06b6d4', '#ec4899', '#84cc16'];
+  // Mid-luminance hues with ≥ 3.5:1 contrast on both the light (#fff) and dark (#1b1d21) plot backgrounds
+  // (WCAG 1.4.11 non-text contrast needs 3:1).
+  var PALETTE = ['#2f6fe0', '#c76b00', '#0f8f64', '#d63a3a', '#8b4ee8', '#0f8aa3', '#d0337f', '#5e8f12'];
   var MAX_POINTS = 4000;
   var MONO = '11px ui-monospace, "Cascadia Mono", Consolas, monospace';
   var SANS = 'system-ui, -apple-system, "Segoe UI", sans-serif';
@@ -462,6 +454,16 @@
         });
       }
       if (hoverPos) drawHover(hoverPos.x, hoverPos.y);
+      describe(vis, dx0, dx1, y0, y1);
+    }
+
+    // Screen-reader summary of what the canvas currently shows.
+    function describe(vis, xa, xb, ya, yb) {
+      function f(v) { return isFinite(v) ? +(+v).toPrecision(3) : '–'; }
+      var names = vis.filter(function (s) { return s.label; }).map(function (s) { return s.label; });
+      var pts = 0; vis.forEach(function (s) { pts += s.y.length; });
+      canvas.setAttribute('aria-label', (opts.title || 'Plot') + '. ' + (vis.length ? vis.length + ' series' + (names.length ? ' (' + names.slice(0, 6).join('; ') + ')' : '') + ', ' + pts + ' points. ' : 'No data yet. ') +
+        (opts.xLabel || 'x') + ' from ' + f(xa) + ' to ' + f(xb) + '; ' + (opts.yLabel || 'y') + ' from ' + f(ya) + ' to ' + f(yb) + (opts.yScale === 'log' ? ' (log scale)' : '') + '.');
     }
 
     // ---------- interaction ----------
@@ -647,6 +649,7 @@
     if (ro) ro.observe(canvas); else window.addEventListener('resize', schedule);
     var mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
     if (mq && mq.addEventListener) mq.addEventListener('change', schedule);
+    window.addEventListener('sdr-themechange', schedule);   // explicit theme toggle (SDR.shell)
 
     function slug() { return (opts.title || 'plot').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'plot'; }
     function csvField(v) { var s = String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
@@ -689,6 +692,7 @@
         if (raf) cancelAnimationFrame(raf);
         if (ro) ro.disconnect(); else window.removeEventListener('resize', schedule);
         if (mq && mq.removeEventListener) mq.removeEventListener('change', schedule);
+        window.removeEventListener('sdr-themechange', schedule);
       }
     };
     draw();

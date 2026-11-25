@@ -1,4 +1,7 @@
-// FM page: controls → SDR.fm / SDR.channel → plots, readouts, audio, SNR sweep (on the SDR.page scaffold).
+/**
+ * @file FM page wiring (DOM): controls → SDR.fm / SDR.channel → spectrum, time, instantaneous frequency, I/Q,
+ * readouts, audio and the SNR-vs-γ sweep.
+ */
 (function () {
   'use strict';
   var ui = SDR.ui, FSA = 48000, FSR = 384000, DEG = Math.PI / 180;
@@ -10,6 +13,10 @@
   var page = SDR.page.create({
     defaults: DEFAULTS, fs: FSA, run: run, sync: sync, renderAudio: renderAudio, maxFileSeconds: 5,
     receivedTitle: 'Play the in-phase part of the received RF baseband (resampled to 48 kHz)',
+    tour: [{ sel: '#controls', text: 'Start from a preset (Narrowband, Broadcast, beta = 1 or 5, mobile flutter), then adjust deviation, bandwidth and CNR.' },
+      { sel: '.readouts', text: 'Beta, Carson bandwidth, measured 98% bandwidth, output SNR against theory, and clicks per second.' },
+      { sel: '.plots .card.plot', text: 'The spectrum: Carson band, the deviation lines and the IF filter edges. Turn on Bessel to see the J_n(beta)^2 line heights.' },
+      { sel: '#sweep-start', text: 'Sweep CNR for several beta values to see FM trade bandwidth for SNR, and where each one hits threshold.' }],
     readouts: [['beta', 'β = Δf / W'], ['carson', 'Carson B_T = 2(Δf + W)'], ['obw', 'Occupied BW (98%)'],
       ['cnr', 'Input CNR (in B_T)'], ['snr', 'Output SNR (measured)'], ['theory', 'Theory above threshold'], ['clicks', 'Clicks / s']]
   });

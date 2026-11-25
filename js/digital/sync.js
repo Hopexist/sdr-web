@@ -1,6 +1,11 @@
-// SDR.sync — synchronization: PLL (generic), loop-gain design, Gardner timing recovery with a cubic
-// Farrow interpolator, 4th-power CFO estimation, lock detection. Pure, no DOM.
-// Depends on: SDR.fft, SDR.mathx, SDR.filters, SDR.mapping (gardnerKp only)
+/**
+ * @file SDR.sync — synchronization loops (pure).
+ * loopGains(BnT, ζ, Kp) → { k1, k2 }; createPll(o) / pll(x, o) (2nd-order, pluggable detector; o: gains or
+ * { fs Hz, loopBw Hz, zeta }); qpskDD(zr, zi) decision-directed detector (Kp = 1);
+ * farrow(x, t samples, out) cubic interpolation; createTimingLoop / timingLoop(x, { sps, t0 samples, bnT, zeta, kp } |
+ * { sps, ideal(k) }) Gardner TED with NCO strobe; gardnerKp(rolloff, sps, span) measured S-curve slope (per sample);
+ * cfoFourthPower(x, { skip, maxN }) → { f cycles/sample }; lockStatus(err, { floor, lockVar }) → { locked, convergence }.
+ */
 (function () {
   'use strict';
   var SDR = (window.SDR = window.SDR || {});

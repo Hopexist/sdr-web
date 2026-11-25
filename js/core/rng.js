@@ -1,5 +1,11 @@
-// SDR.rng — seeded PRNG with Gaussian helpers. Pure, no DOM.
-// Default xoshiro128** (period 2^128 − 1); mulberry32 kept via createRng(seed, 'mulberry32').
+/**
+ * @file SDR.rng — seeded pseudo-random numbers (pure, no DOM).
+ * createRng(seed: uint32, algorithm?: 'xoshiro128**' | 'mulberry32') → { seed, algorithm,
+ *   uniform() → [0, 1), randn() → N(0, 1) (polar Box–Muller, second value cached),
+ *   randnComplex(n, variance) → { re, im } with E|z|² = variance (variance/2 per axis),
+ *   randomBits(n) → Uint8Array of 0/1 }.
+ * Every stochastic function in the project takes one of these, so runs are reproducible from the seed.
+ */
 (function () {
   'use strict';
   var SDR = (window.SDR = window.SDR || {});

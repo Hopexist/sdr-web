@@ -1,5 +1,15 @@
-// SDR.filters — FIR lowpass design (Kaiser-windowed sinc), causal FIR filtering, DC blocker.
-// Every filter reports its group delay in samples. Pure, no DOM.
+/**
+ * @file SDR.filters — filter design and streaming filters (pure). Every filter reports its group delay (samples).
+ * Design: lowpass({ cutoff Hz (−6 dB point), fs Hz, transition Hz, attenuation dB }) → { taps, groupDelay, ripple }
+ * (Kaiser window, memoized), rrcTaps(rolloff, sps, spanSymbols) → { taps (Σg² = 1), groupDelay },
+ * rrcAutoSpan(rolloff) → symbols.
+ * Batch: fir(x, taps) (causal, FFT overlap-add for long filters), firComplex, dcBlock(x, skip) → { y, groupDelay 0 },
+ * interpolate(x, L), decimateFiltered(x, M, { phase }), firstOrder(x, a s, b s, fs Hz) (bilinear (1+sa)/(1+sb)),
+ * fractionalDelay(x, d samples), resample(x, ratio).
+ * Streaming ({ process(block) → block, reset() }, state carried between blocks): createFir(taps),
+ * createUpFir(taps, L) (polyphase pulse shaping), createResampler({ delay samples, ratio }) (+ flush()),
+ * createDcBlocker(pole a).
+ */
 (function () {
   'use strict';
   var SDR = (window.SDR = window.SDR || {});

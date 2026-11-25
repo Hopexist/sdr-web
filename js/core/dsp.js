@@ -1,5 +1,11 @@
-// SDR.dsp — convolution, resampling, windows, Welch PSD. Pure, no DOM.
-// Depends on: SDR.fft
+/**
+ * @file SDR.dsp — basic DSP (pure). Depends on SDR.fft.
+ * convolve(x, h, 'full' | 'same') (x real or complex, h real; 'same' uses the numpy alignment),
+ * upsample(x, L) (zero-stuffing), decimate(x, M) (no filter), hann/hamming/blackman(N) (symmetric),
+ * welchPSD(x, fs, { nfft, overlap, window }) → { freqs (−fs/2…fs/2, unit of fs), psdDb } scaled as a power
+ * spectrum (a tone of power P peaks at 10·log10 P dB), occupiedBandwidth(x, fs, { fraction, nfft, psd }) → Hz,
+ * measureOutputSnr(ref, out, delay samples) → { snrDb, gain } (least-squares gain, residual = noise + distortion).
+ */
 (function () {
   'use strict';
   var SDR = (window.SDR = window.SDR || {});

@@ -1,5 +1,9 @@
-// SDR.am — AM modulation/demodulation at complex baseband. Pure, no DOM.
-// Depends on: SDR.cx, SDR.filters
+/**
+ * @file SDR.am — AM at complex baseband (pure). Depends on SDR.cx, SDR.filters, SDR.dsp.
+ * modulate(m (|m| ≤ 1), { type: 'DSB-LC' | 'DSB-SC', mu }) → 1 + μ·m or m; demodEnvelope(x, { fs Hz, audioBw Hz })
+ * and demodCoherent(x, { fs, audioBw, phaseEst rad, dcBlock }) → { y, delay samples };
+ * measureOutputSnr (alias of SDR.dsp.measureOutputSnr).
+ */
 (function () {
   'use strict';
   var SDR = (window.SDR = window.SDR || {});

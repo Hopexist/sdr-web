@@ -1,4 +1,9 @@
-// SDR.cx — complex signal helpers. A signal is { re: Float64Array, im: Float64Array }.
+/**
+ * @file SDR.cx — complex-array helpers. A signal is { re: Float64Array, im: Float64Array } of equal length.
+ * zeros(n), fromReal(arr), copy(x), add(a, b), sub(a, b), mul(a, b) (elementwise), scale(x, k), conj(x),
+ * abs(x) → Float64Array, angle(x) → radians, power(x) → mean |x|², rotate(x, phase rad),
+ * mixFreq(x, f, fs) → x·e^{j2π f n / fs} (f and fs in the same unit, e.g. Hz or cycles/sample with fs = 1).
+ */
 (function () {
   'use strict';
   var SDR = (window.SDR = window.SDR || {});

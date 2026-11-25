@@ -1,6 +1,8 @@
-// SDR.mapping — Gray QPSK mapping, hard/soft demapping, differential encoding. Pure, no DOM.
-// Points (±1 ± j)/√2, so average Es = 1. Bit pair (b0, b1): I = (1 − 2·b0)/√2, Q = (1 − 2·b1)/√2.
-// Neighbouring points (90° apart) differ in exactly one bit: that is the Gray property.
+/**
+ * @file SDR.mapping — Gray QPSK (pure). Points (±1 ± j)/√2, so Es = 1.
+ * qpskMap(bits) → symbols, qpskDemapHard(symbols) → bits, qpskDemapLlr(symbols, N0) → LLR = 2√2·y/N0 per axis,
+ * diffEncode(bits, refQuadrant) / diffDecode(symbols, refSymbol) (Gray dibit → 0/90/180/270° steps), quadrant(re, im).
+ */
 (function () {
   'use strict';
   var SDR = (window.SDR = window.SDR || {});

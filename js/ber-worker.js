@@ -1,5 +1,8 @@
-// Classic Web Worker for BER sweeps (http(s) only). Loads the same DSP files as the page, then runs one
-// sweep point per message with SDR.ber.runPointSync: identical code and seed → identical results.
+/**
+ * @file Classic Web Worker for BER sweeps (http(s) only; file:// pages fall back to the main thread).
+ * Loads the same DSP files as the page, then runs one sweep point per message with SDR.ber.runPointSync:
+ * message { id, cfg, seed, stop } → reply { id, result } or { id, error }. Same code and seed → same results.
+ */
 /* global importScripts */
 self.window = self;   // the DSP files attach to window.SDR
 importScripts('core/rng.js', 'core/complex.js', 'core/mathx.js', 'core/fft.js', 'core/dsp.js', 'core/filters.js',

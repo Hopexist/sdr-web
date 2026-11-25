@@ -1,5 +1,9 @@
-// SDR.audio — load and play audio with the Web Audio API.
-// The AudioContext is created lazily on first use, which must come from a user gesture (autoplay rules).
+/**
+ * @file SDR.audio — Web Audio helpers (browser only). The AudioContext is created on first use (a user gesture).
+ * loadFile(file, { fs Hz, maxSeconds }) → Promise<Float64Array> (mono, resampled with OfflineAudioContext);
+ * play(x, fs Hz, { gain, normalize }) → Promise (DC removed, peak normalized to 0.9, one source at a time);
+ * stop(); setVolume(0…1); getVolume(); isPlaying().
+ */
 (function () {
   'use strict';
   var SDR = (window.SDR = window.SDR || {});

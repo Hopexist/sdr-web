@@ -1,6 +1,8 @@
-// SDR.qpskControls — the QPSK link's controls, shared by the QPSK page and the BER page's curve editor.
-// create({ onInput, onChange }) builds the controls (unregistered); groups/sections say how the QPSK page lays
-// them out; sync(state) enables/hides dependent controls; cfgFrom(state) turns UI state into a link config.
+/**
+ * @file SDR.qpskControls — the QPSK link's controls, shared by the QPSK page and the BER curve editor (DOM).
+ * DEFAULTS (UI state), create({ onInput, onChange }) → { c (controls by key), groups, sections, sync(state) },
+ * cfgFrom(state) → QPSK link config.
+ */
 (function () {
   'use strict';
   var SDR = (window.SDR = window.SDR || {});

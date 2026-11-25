@@ -1,4 +1,6 @@
-// AM page: controls → SDR.am / SDR.channel → plots, readouts, audio, SNR sweep (on the SDR.page scaffold).
+/**
+ * @file AM page wiring (DOM): controls → SDR.am / SDR.channel → plots, readouts, audio and the output-SNR sweep.
+ */
 (function () {
   'use strict';
   var ui = SDR.ui, FS = 48000, DEG = Math.PI / 180;
@@ -10,6 +12,10 @@
   var page = SDR.page.create({
     defaults: DEFAULTS, fs: FS, run: run, sync: sync,
     receivedTitle: 'Play the in-phase part of the received baseband (DC removed)',
+    tour: [{ sel: '#controls', text: 'Pick the message, AM type (with or without carrier), channel noise and detector here. Plots update as you drag.' },
+      { sel: '.readouts', text: 'Measured output SNR against the ideal coherent result, and a one-line explanation of what is limiting the link.' },
+      { sel: '.plots .card.plot', text: 'Hover any plot to read values; scroll to zoom, drag to pan, double-click to reset.' },
+      { sel: '#sweep-start', text: 'Compute the output-SNR-vs-CNR curve for both detectors to see the envelope threshold effect.' }],
     readouts: [['snr', 'Output SNR (measured)'], ['cnr', 'Input CNR'], ['ideal', 'Ideal coherent SNR'], ['eta', 'Modulation efficiency η']]
   });
   var lv = page.live, commit = page.commit;

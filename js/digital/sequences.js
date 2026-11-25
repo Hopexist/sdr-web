@@ -1,5 +1,7 @@
-// SDR.seq — LFSR maximal-length sequences and the frame preamble. Pure, no DOM.
-// Depends on: SDR.mapping
+/**
+ * @file SDR.seq — LFSR maximal-length sequences (pure). mseq(m) for degree m = 5…10 → Uint8Array of 2^m − 1 bits;
+ * preamble(n = 64) → the known QPSK preamble built from the degree-7 m-sequence.
+ */
 (function () {
   'use strict';
   var SDR = (window.SDR = window.SDR || {});

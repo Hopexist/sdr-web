@@ -1,9 +1,9 @@
-// SDR.page — shared scaffold for simulator pages (AM, FM, ...).
-// Provides: controls panel + status bar, readouts card, plot cards, message source (tone / two-tone /
-// chirp / audio file), seed control, live preview/commit wiring, URL-hash state with reset/copy link,
-// play buttons, and chunked sweeps. The page script supplies run(state, full) and optional sync(state).
-//
-// HTML contract: <aside id="controls"></aside> and <section id="plots"> … <details> explainer </details></section>.
+/**
+ * @file SDR.page — shared scaffold for the simulator pages (DOM). create({ defaults, run(state, full), sync(state),
+ * readouts, fs Hz, maxFileSeconds, renderAudio, audio, tour }) → page with group/section/register, addPlot, addPlotGrid,
+ * addCard, addSweep, sourceControls, message(state, n, bwHz), duration, seedControl, extraChannelSections/extraChannel,
+ * setReadouts, setExplain, commit(after), live, status, start(). Registers the R / L / Space shortcuts and the tour.
+ */
 (function () {
   'use strict';
   var SDR = (window.SDR = window.SDR || {});
@@ -70,9 +70,16 @@
       else status.set('Done in ' + Math.round(performance.now() - t0) + ' ms', 'ok');
     }
 
-    function commit() {
-      run(true);
-      ui.writeHash(state());
+    // Full recompute. Shows "Computing…" on the plots first (one frame later the work starts), then
+    // writes the URL hash. after() runs once it is done (for status messages that must come last).
+    var commitTimer = 0;
+    function commit(after) {
+      plots.classList.add('busy');
+      clearTimeout(commitTimer);
+      commitTimer = setTimeout(function () {
+        try { run(true); ui.writeHash(state()); } finally { plots.classList.remove('busy'); }
+        if (typeof after === 'function') after();
+      }, 30);
     }
 
     var page = {
@@ -284,16 +291,24 @@
         ].forEach(function (b) { playRow.appendChild(b.el); });
         if (o.audio !== false) panel.appendChild(ui.group('Listen', [playRow, volume]));
 
-        var linkRow = el('div', 'btn-row');
-        linkRow.appendChild(ui.button({ label: 'Reset to defaults', title: 'Restore every control to its default', onClick: function () {
-          ui.applyState(controls, o.defaults); sections.forEach(function (x) { x.sync(); }); commit();
-        } }).el);
-        linkRow.appendChild(ui.button({ label: 'Copy link', title: 'Copy a link that restores this exact setup', onClick: function () {
+        function resetAll() { ui.applyState(controls, o.defaults); sections.forEach(function (x) { x.sync(); }); commit(function () { status.set('Reset to defaults', 'ok'); }); }
+        function copyLink() {
           ui.writeHash(state());
           ui.copyText(location.href).then(function () { status.set('Link copied', 'ok'); },
             function () { status.set('Copy failed. The link is in the address bar.', 'err'); });
-        } }).el);
+        }
+        var linkRow = el('div', 'btn-row');
+        linkRow.appendChild(ui.button({ label: 'Reset to defaults', title: 'Restore every control to its default (R)', onClick: resetAll }).el);
+        linkRow.appendChild(ui.button({ label: 'Copy link', title: 'Copy a link that restores this exact setup (L)', onClick: copyLink }).el);
         panel.appendChild(linkRow);
+        if (SDR.shell) {
+          SDR.shell.action('reset', resetAll, 'Reset every control to its default');
+          SDR.shell.action('link', copyLink, 'Copy a link to this exact setup');
+          if (o.audio !== false) SDR.shell.action('space', function () {
+            if (SDR.audio.isPlaying()) { SDR.audio.stop(); status.set('Stopped'); } else playRow.querySelectorAll('button')[2].click();
+          }, 'Play the demodulated audio / stop');
+          if (o.tour) SDR.shell.tour(o.tour);
+        }
 
         function loadFromHash() { ui.applyState(controls, ui.readHash(o.defaults)); sections.forEach(function (x) { x.sync(); }); run(true); }
         window.addEventListener('hashchange', loadFromHash);
@@ -311,8 +326,7 @@
         if (peak > 0) for (i = 0; i < x.length; i++) x[i] /= peak;
         fileMsg = x;
         src.src.set('file', true);
-        commit();
-        status.set('Loaded ' + f.name + ' (' + (x.length / FS).toFixed(1) + ' s) in ' + Math.round(performance.now() - t0) + ' ms', 'ok');
+        commit(function () { status.set('Loaded ' + f.name + ' (' + (x.length / FS).toFixed(1) + ' s) in ' + Math.round(performance.now() - t0) + ' ms', 'ok'); });
       }, function (e) { status.set('Could not decode audio: ' + (e && e.message ? e.message : e), 'err'); });
     }
 

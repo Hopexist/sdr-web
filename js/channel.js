@@ -1,19 +1,15 @@
-// SDR.channel — channel impairments. Pure, no DOM.
-// Depends on: SDR.cx, SDR.filters, SDR.rng
-//
-// Every impairment is a streaming stage built by STAGES[type](params, ctx) → { process(block), flush?(), ... }.
-// createChain(list, ctx) strings them together; apply(x, list, rng) runs a whole signal through (batch).
-// Stages that need randomness of their own (fading, phase noise, per-tap fading) get a sub-generator seeded
-// from the main rng when the chain is built, and only when they are enabled, so the AWGN sequence (and any
-// result without those impairments) is unchanged, and block size never changes the result.
-//
-// Order used by the QPSK link, and why:
-//   multipath → fading       the propagation channel (paths, then the flat fade they share)
-//   → timing/drift           receiver sample clock: where the ADC samples the arriving waveform
-//   → CFO → phase noise → phase offset    receiver LO: frequency error, LO jitter, fixed phase
-//   → AWGN                   thermal noise at the receiver front end
-//   → IQ imbalance → DC offset            analog I/Q downconverter: mismatch, then LO leakage / offset
-//   → ADC                    AGC, clipping and quantization happen last, on everything above
+/**
+ * @file SDR.channel — channel impairments as streaming stages (pure). Depends on SDR.cx, SDR.filters, SDR.rng.
+ * Conventions: symbols Es = 1, unit-energy pulses; esn0Db(ebn0Db, bitsPerSymbol), snrPerSampleDb(ebn0Db, bps, sps)
+ * = Es/N0 − 10·log10(sps); addAwgnEbN0(x, ebn0Db, { bitsPerSymbol }, rng) adds complex noise of variance N0 per sample;
+ * addAwgnCnr(x, cnrDb, bwHz, fsHz, rng, { refPower }) (analog pages); phaseOffset(x, rad); freqOffset(x, f, fs).
+ * Stages (createChain(list, { rng }) → { process, flush, stages }, apply(x, list, rng) batch):
+ * multipath { taps: [{ delay symbols, gain }], tapFading fd·Ts, sps }, fading { model rayleigh|rician, mode block|jakes,
+ * blockSymbols, fdTs (Doppler × symbol time), kDb, sps }, timing { sym, sps }, drift { ppm }, cfo { fRs (× symbol rate), sps },
+ * phasenoise { linewidthTs (Δν·Ts), sps }, phase { deg }, awgn { ebn0Db, bitsPerSymbol, sps }, cnr, iq { epsDb, phiDeg },
+ * dc { rel (× RMS), angleDeg, rmsRef (power) }, adc { bits, backoffDb (from full-scale sine), nominalPower }.
+ * Also createFading, multipathPresets(name, { spacing, rmsDelay }), iqCoeffs, irrDb.
+ */
 (function () {
   'use strict';
   var SDR = (window.SDR = window.SDR || {});

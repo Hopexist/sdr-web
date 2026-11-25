@@ -1,4 +1,7 @@
-// Tiny test runner + core tests + plot demos for tests.html.
+/**
+ * @file In-browser test suite for tests.html: check(name, cond, detail) / approx(name, actual, expected, tol),
+ * groups that may return Promises, a results table, and a machine-readable <pre id="ci-result"> for CI.
+ */
 (function () {
   'use strict';
   var SDR = window.SDR;
@@ -667,13 +670,20 @@
     var fl = runSweep({ cfg: BERCFG, param: 'ebn0Db', values: [11, 12, 13], stop: { minErrors: 100, maxBits: 40000 }, seed: 1, floorBer: 1e-7 });
     check('floor skip: after 0 errors at maxBits, higher Eb/N0 points are marked "below floor"', fl[0].errors === 0 && fl[1].stoppedBy === 'floor' && fl[2].stoppedBy === 'floor' && fl[1].bits === 0,
       fl.map(function (r) { return r.value + ': ' + r.stoppedBy; }).join(', '));
-    // Short AWGN preset. 7 independent 95% intervals all cover the truth only ~70% of the time, so the
-    // seed is fixed (seed 2; 6 of seeds 1–8 pass, as expected): the check is "the engine is unbiased".
+    // Short AWGN preset, tested honestly: per-point Wilson intervals Bonferroni-corrected to a family-wise
+    // α = 0.025 over the k points, plus a pooled χ² test (k dof) at α = 0.025. A correct engine fails this
+    // for ≈ 5% of seeds (checked: 3 of seeds 1–60), whatever the seed; the seed here only makes CI repeatable.
     var aw = runSweep({ cfg: BERCFG, param: 'ebn0Db', values: B.parseValues('0:1:6'), stop: { minErrors: 100, maxBits: 2e6 }, seed: 2, floorBer: 1e-7 });
+    var kpts = aw.length, zB = SDR.theory.normalQuantileUpper(0.025 / (2 * kpts)), chi = 0;
     aw.forEach(function (r) {
-      var th = SDR.theory.qpskAwgn(r.value);
-      check('AWGN sweep (0–6 dB, seed 2): ' + r.value + ' dB inside Wilson CI of theory', th >= r.ciLow && th <= r.ciHigh, r.errors + '/' + r.bits + ', CI [' + r.ciLow.toExponential(2) + ', ' + r.ciHigh.toExponential(2) + '], theory ' + th.toExponential(3));
+      var th = SDR.theory.qpskAwgn(r.value), ci = SDR.theory.wilsonInterval(r.errors, r.bits, zB);
+      chi += Math.pow(r.errors - r.bits * th, 2) / (r.bits * th * (1 - th));
+      check('AWGN sweep ' + r.value + ' dB: theory inside the Bonferroni-corrected interval (family α 0.025, z ' + zB.toFixed(2) + ')', th >= ci[0] && th <= ci[1],
+        r.errors + '/' + r.bits + ', CI [' + ci[0].toExponential(2) + ', ' + ci[1].toExponential(2) + '], theory ' + th.toExponential(3));
     });
+    var q975 = SDR.theory.chi2Quantile(0.975, kpts);
+    check('AWGN sweep: pooled χ² across ' + kpts + ' points consistent with theory (≤ χ²₀.₉₇₅ = ' + q975.toFixed(1) + ')', chi <= q975, 'χ² = ' + chi.toFixed(2));
+    check('adaptive frames: no AWGN point overshoots minErrors by more than 2.5×', aw.every(function (r) { return r.errors <= 250; }), aw.map(function (r) { return r.errors; }).join(', '));
     var c1 = [{ name: 'A', param: 'ebn0Db', results: aw.map(function (r) { return Object.assign({}, r); }) }];
     var csv = B.toCSV(c1).trim().split('\n');
     check('CSV: header columns and one row per point', csv[0] === B.CSV_COLUMNS.join(',') && csv.length === aw.length + 1 && csv[0].split(',').length === 12, csv[0]);
@@ -712,6 +722,12 @@
   var nPass = results.filter(function (r) { return r.pass; }).length;
   var summary = document.getElementById('summary');
   summary.textContent = (nPass === results.length ? 'PASS ' : 'FAIL ') + nPass + ' / ' + results.length + ' tests passed';
+  // Machine-readable line for CI (.github/workflows/tests.yml).
+  var ci = document.getElementById('ci-result');
+  if (ci) { ci.textContent = (nPass === results.length ? 'PASS ' : 'FAIL ') + nPass + '/' + results.length; ci.setAttribute('data-done', '1'); }
+  if (SDR.shell) SDR.shell.tour([{ sel: '#summary', text: 'Every DSP check runs in your browser when this page loads; this line sums them up.' },
+    { sel: 'table.results', text: 'One row per check: the measured value, what it was compared with, and the tolerance.' },
+    { sel: '#demo-sine', text: 'The plot-library demos below are for checking by eye.' }]);
   summary.className = nPass === results.length ? 'pass' : 'fail';
   var tbody = document.getElementById('results');
   results.forEach(function (r) {

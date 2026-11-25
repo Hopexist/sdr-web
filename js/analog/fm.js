@@ -1,6 +1,11 @@
-// SDR.fm — FM modulation/demodulation at complex baseband. Pure, no DOM.
-// Two rates: audio fsA (message in, audio out) and RF baseband fsR = L·fsA (L integer).
-// Depends on: SDR.cx, SDR.filters, SDR.sync
+/**
+ * @file SDR.fm — FM at two rates: audio fsA (Hz) and RF baseband fsR = L·fsA (pure). Depends on SDR.cx, SDR.filters, SDR.sync.
+ * beta(Δf, W), carson(Δf, W) Hz; modulate(m, { fsR, deviation Hz }); preEmphasis/deEmphasis(x, { fsA, tau s });
+ * ifFilter(x, { fsR, bw Hz }) → { y, groupDelay }; demodDiscriminator / demodPll(x, { fsR, deviation, loopBw Hz, zeta });
+ * countClicks(rx, ref, skip) (2π slips); transmit(mA, { fsA, fsR, deviation, tau }) → { x, mR, delay };
+ * receive(rx, { fsA, fsR, deviation, W, ifBw, demod, loopBw, tau, txDelay }) → { y, delay (audio samples), inst, ifOut, dc };
+ * theorySnr({ pm, deviation, W, bt, cnr (linear) }) (linear).
+ */
 (function () {
   'use strict';
   var SDR = (window.SDR = window.SDR || {});

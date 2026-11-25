@@ -1,15 +1,16 @@
-// SDR.ber — Monte Carlo sweep engine on top of the streaming QPSK link. DOM-free: runs on the main thread
-// (through SDR.ui.runChunked) or inside a Web Worker (js/ber-worker.js) with identical results.
-// Depends on: SDR.rng, SDR.qpsk, SDR.theory (and SDR.am / SDR.fm / SDR.channel / SDR.dsp for the analog sweep)
-//
-// A sweep: { name, cfg (QPSK link config), param (path into cfg), values, stop: { minErrors, maxBits,
-// maxSecondsPerPoint }, floorBer, seed }. Point i runs with seed deriveSeed(seed, i), so a sweep is
-// reproducible regardless of where (or in what order) its points run. A point stopped by its time limit
-// depends on machine speed; points stopped by errors or bits do not.
+/**
+ * @file SDR.ber — Monte Carlo BER sweep engine (DOM-free; main thread or Web Worker). Depends on SDR.qpsk, SDR.theory.
+ * A sweep: { cfg (QPSK link config), param (config path or alias), values, stop: { minErrors, maxBits, maxSecondsPerPoint },
+ * floorBer, seed }. getPath/setPath/resolveParam/paramInfo, parseValues('a:step:b' | list), deriveSeed(seed, i),
+ * pointTask(cfg, seed, stop) (generator; adaptive frame sizes) / runPointSync, sweepTask(sweep, onPoint) (generator,
+ * floor skip), requiredEbN0(results, targetBer) dB, implementationLoss(sim, theory, target) dB, diversitySlope(results)
+ * (decades per decade), theoryKind/theoryBer/theoryCurve, toCSV/toJSON/fromJSON, createLibrary(storage),
+ * canUseWorkers/createPool(url, n), estimateRemaining(sweep, results, bits/s) s, analogPoint/analogTheory (AM/FM, γ in dB).
+ */
 (function () {
   'use strict';
   var SDR = (self.SDR = self.SDR || {});
-  var VERSION = '0.5.0';
+  var VERSION = '1.0.0';
 
   // Friendly parameter names → paths in the link config, with axis labels and scales.
   var PARAMS = {
@@ -78,13 +79,26 @@
   var STOP = { minErrors: 100, maxBits: 1e7, maxSecondsPerPoint: 60 };
   function now() { return (self.performance || Date).now(); }
 
+  // Frame size for the next frame of a point: aim for ≤ minErrors/4 expected errors (so a point stops close
+  // to minErrors instead of overshooting at high BER), between MIN_FRAME and the config's nBits, and never past
+  // maxBits. Depends only on what was simulated so far, so it is seed-reproducible.
+  var MIN_FRAME = 2000;
+  function nextFrameBits(cfg, stop, errors, bits) {
+    var maxFrame = Math.max(MIN_FRAME, cfg.nBits || 20000), n;
+    if (!bits) n = MIN_FRAME;
+    else if (!errors) n = maxFrame;
+    else n = (stop.minErrors / 4) / (errors / bits);
+    n = Math.min(maxFrame, Math.max(MIN_FRAME, n), Math.max(MIN_FRAME, stop.maxBits - bits));
+    return 2 * Math.round(n / 2);
+  }
+
   // One point: frames of the streaming link (createLink → step) until a stop rule fires.
   // Yields { errors, bits } between steps; returns the point record.
   function* pointTask(cfg, seed, stopIn) {
     var stop = Object.assign({}, STOP, stopIn), rng = SDR.rng.createRng(seed), t0 = now();
     var errors = 0, bits = 0, ev = 0, evBits = 0, by = '';
     for (;;) {
-      var link = SDR.qpsk.createLink(cfg, rng);
+      var link = SDR.qpsk.createLink(Object.assign({}, cfg, { nBits: nextFrameBits(cfg, stop, errors, bits) }), rng);
       while (!link.done) { link.step(96); yield { errors: errors, bits: bits }; }
       var r = link.finish(), nb = r.bitsTx.length;
       errors += r.errors; bits += nb;

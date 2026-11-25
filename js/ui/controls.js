@@ -1,5 +1,10 @@
-// SDR.ui — small reusable form controls, live-update helpers, URL-hash state, status bar.
-// Every control: { el, key, get(), set(value, silent), setDisabled(bool) }.
+/**
+ * @file SDR.ui — form controls and page utilities (DOM). Controls: slider({ key, label, min, max, step, value, unit, log,
+ * title, onInput, onChange }), number, text, select, toggle, button, fileInput, group(legend, items),
+ * section(title, toggle, items) (collapsible); each → { el, key, get(), set(v, silent), setDisabled(bool) }.
+ * Utilities: debounce(fn, ms), throttle(fn, ms), live({ preview, commit, fps }), runChunked(task, { onProgress,
+ * signal, isPaused, budgetMs }) → Promise, encodeHash/decodeHash/readHash/writeHash, stateOf/applyState, copyText, statusBar.
+ */
 (function () {
   'use strict';
   var SDR = (window.SDR = window.SDR || {});
